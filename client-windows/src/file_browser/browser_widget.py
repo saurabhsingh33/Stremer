@@ -9,13 +9,15 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QListView,
 )
-from PyQt6.QtCore import Qt, QPoint, QSize, QUrl
+from PyQt6.QtCore import Qt, QPoint, QSize, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QStyle
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 
 class BrowserWidget(QWidget):
+    path_changed = pyqtSignal(str)
+
     def __init__(self, api_client, on_play, on_delete, on_copy):
         super().__init__()
         self.api_client = api_client
@@ -27,6 +29,8 @@ class BrowserWidget(QWidget):
         self._net = QNetworkAccessManager(self)
         self._thumb_cache = {}
         self._thumb_queue = {}
+        self._back_stack: list[str] = []
+        self._forward_stack: list[str] = []
 
         layout = QVBoxLayout(self)
         # List (table) view
@@ -95,6 +99,7 @@ class BrowserWidget(QWidget):
         if not self.api_client:
             # No API client yet; clear view
             self.table.setRowCount(0)
+            self.path_changed.emit(self.current_path)
             return
         items = self.api_client.list_files(path)
         if self.view_mode == "list":
@@ -130,6 +135,45 @@ class BrowserWidget(QWidget):
                     lower = name.lower()
                     if lower.endswith((".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".webm")):
                         self._load_thumbnail_async(item, path_full)
+        # Notify listeners that path changed
+        self.path_changed.emit(self.current_path)
+
+    def navigate_to(self, path: str):
+        # Push current path to back history if not the same
+        if path != self.current_path:
+            if self.current_path:
+                self._back_stack.append(self.current_path)
+            # Clear forward history
+            self._forward_stack.clear()
+        self.load_path(path)
+
+    def can_go_back(self) -> bool:
+        return len(self._back_stack) > 0
+
+    def can_go_up(self) -> bool:
+        return self.current_path != "/"
+
+    def go_back(self):
+        if not self._back_stack:
+            return
+        prev = self._back_stack.pop()
+        # Current goes to forward stack
+        if self.current_path:
+            self._forward_stack.append(self.current_path)
+        self.load_path(prev)
+
+    def go_up(self):
+        # Compute parent directory
+        cur = self.current_path or "/"
+        if cur == "/":
+            return
+        # Normalize
+        if not cur.startswith("/"):
+            cur = "/" + cur
+        parent = cur.rsplit("/", 1)[0]
+        if parent == "":
+            parent = "/"
+        self.navigate_to(parent)
 
     def _selected_item(self):
         if self.view_mode == "list":
@@ -189,7 +233,7 @@ class BrowserWidget(QWidget):
         if not item:
             return
         if item["type"] == "dir":
-            self.load_path(item["path"])  # navigate into directory
+            self.navigate_to(item["path"])  # navigate into directory
 
     def _on_icon_double_click(self):
         item = self.icon_list.currentItem()
@@ -197,7 +241,7 @@ class BrowserWidget(QWidget):
             return
         data = item.data(Qt.ItemDataRole.UserRole)
         if data and data.get("type") == "dir":
-            self.load_path(data.get("path"))
+            self.navigate_to(data.get("path"))
 
     def set_api_client(self, api_client):
         self.api_client = api_client

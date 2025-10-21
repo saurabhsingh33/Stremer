@@ -22,6 +22,20 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
         # Actions
+        self.back_action = QAction(self)
+        self.back_action.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_ArrowBack))
+        self.back_action.setToolTip("Back")
+        self.back_action.setEnabled(False)
+        self.back_action.triggered.connect(self._go_back)
+        toolbar.addAction(self.back_action)
+
+        self.up_action = QAction(self)
+        self.up_action.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_ArrowUp))
+        self.up_action.setToolTip("Up one level")
+        self.up_action.setEnabled(False)
+        self.up_action.triggered.connect(self._go_up)
+        toolbar.addAction(self.up_action)
+
         self.login_action = QAction("Login", self)
         self.login_action.triggered.connect(self._on_login_or_logout)
         toolbar.addAction(self.login_action)
@@ -46,6 +60,8 @@ class MainWindow(QMainWindow):
 
         # Browser (initialize without API client; will be set after login)
         self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy)
+        # Update action enabled states when path changes
+        self.browser.path_changed.connect(self._update_nav_actions)
         layout.addWidget(self.browser)
 
         # Status bar
@@ -108,6 +124,16 @@ class MainWindow(QMainWindow):
 
     def _on_view_change(self, text: str):
         self.browser.set_view_mode(text.lower())
+
+    def _update_nav_actions(self, _path: str):
+        self.back_action.setEnabled(self.browser.can_go_back())
+        self.up_action.setEnabled(self.browser.can_go_up())
+
+    def _go_back(self):
+        self.browser.go_back()
+
+    def _go_up(self):
+        self.browser.go_up()
 
     def _play(self, path: str):
         if not self.api_client:
