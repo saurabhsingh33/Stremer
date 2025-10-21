@@ -17,6 +17,8 @@ from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 class BrowserWidget(QWidget):
     path_changed = pyqtSignal(str)
+    selection_changed = pyqtSignal(dict)
+    selection_cleared = pyqtSignal()
 
     def __init__(self, api_client, on_play, on_delete, on_copy):
         super().__init__()
@@ -41,6 +43,7 @@ class BrowserWidget(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
         self.table.doubleClicked.connect(self._on_double_click)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
 
         # Icon/thumbnail view
         self.icon_list = QListWidget()
@@ -52,6 +55,7 @@ class BrowserWidget(QWidget):
         self.icon_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.icon_list.customContextMenuRequested.connect(self._open_context_menu_icons)
         self.icon_list.doubleClicked.connect(self._on_icon_double_click)
+        self.icon_list.itemSelectionChanged.connect(self._on_selection_changed)
 
         layout.addWidget(self.table)
         layout.addWidget(self.icon_list)
@@ -100,15 +104,26 @@ class BrowserWidget(QWidget):
             # No API client yet; clear view
             self.table.setRowCount(0)
             self.path_changed.emit(self.current_path)
+            self.selection_cleared.emit()
             return
         items = self.api_client.list_files(path)
+        # Clear selections
+        self.table.clearSelection()
+        self.icon_list.clearSelection()
         if self.view_mode == "list":
             self.table.setRowCount(0)
             for item in items:
                 row = self.table.rowCount()
                 self.table.insertRow(row)
-                self.table.setItem(row, 0, QTableWidgetItem(item.get("name", "")))
-                self.table.setItem(row, 1, QTableWidgetItem(item.get("type", "file")))
+                name = item.get("name", "")
+                type_ = item.get("type", "file")
+                size_val = item.get("size", None)
+                path_full = f"{self.current_path.rstrip('/')}/{name}" if self.current_path != "/" else f"/{name}"
+                name_item = QTableWidgetItem(name)
+                # Attach metadata to first column item for retrieval
+                name_item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
+                self.table.setItem(row, 0, name_item)
+                self.table.setItem(row, 1, QTableWidgetItem(type_))
                 size_text = self._fmt_size(item.get("size", None)) if item.get("type") == "file" else "-"
                 self.table.setItem(row, 2, QTableWidgetItem(size_text))
                 self.table.setRowHeight(row, 24)
@@ -121,13 +136,14 @@ class BrowserWidget(QWidget):
             for it in items:
                 name = it.get("name", "")
                 type_ = it.get("type", "file")
-                size_text = self._fmt_size(it.get("size", None)) if type_ == "file" else ""
+                size_val = it.get("size", None)
+                size_text = self._fmt_size(size_val) if type_ == "file" else ""
                 text = f"{name}\n{size_text}" if size_text else name
                 icon = folder_icon if type_ == "dir" else file_icon
                 item = QListWidgetItem(icon, text)
                 # Store metadata for context/double-click
                 path_full = f"{self.current_path.rstrip('/')}/{name}" if self.current_path != "/" else f"/{name}"
-                item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full})
+                item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
                 self.icon_list.addItem(item)
 
                 # If thumbnails mode and file is image/video, try loading thumbnail
@@ -137,6 +153,7 @@ class BrowserWidget(QWidget):
                         self._load_thumbnail_async(item, path_full)
         # Notify listeners that path changed
         self.path_changed.emit(self.current_path)
+        self.selection_cleared.emit()
 
     def navigate_to(self, path: str):
         # Push current path to back history if not the same
@@ -180,6 +197,12 @@ class BrowserWidget(QWidget):
             idx = self.table.currentRow()
             if idx < 0:
                 return None
+            name_item = self.table.item(idx, 0)
+            if name_item is not None:
+                data = name_item.data(Qt.ItemDataRole.UserRole)
+                if data:
+                    return data
+            # Fallback reconstruction
             name = self.table.item(idx, 0).text()
             type_ = self.table.item(idx, 1).text()
             path = f"{self.current_path.rstrip('/')}/{name}" if self.current_path != "/" else f"/{name}"
@@ -245,6 +268,13 @@ class BrowserWidget(QWidget):
 
     def set_api_client(self, api_client):
         self.api_client = api_client
+
+    def _on_selection_changed(self):
+        item = self._selected_item()
+        if item:
+            self.selection_changed.emit(item)
+        else:
+            self.selection_cleared.emit()
 
     def _load_thumbnail_async(self, list_item: QListWidgetItem, path: str):
         if not self.api_client:

@@ -25,6 +25,15 @@ class APIClient:
     def thumb_url(self, path: str, w: int = 256, h: int = 256) -> str:
         return f"{self.base_url}/thumb?path={requests.utils.quote(path, safe='')}&w={w}&h={h}"
 
+    def meta_url(self, path: str) -> str:
+        return f"{self.base_url}/meta?path={requests.utils.quote(path, safe='')}"
+
+    def get_meta(self, path: str) -> Dict:
+        url = f"{self.base_url}/meta"
+        resp = requests.get(url, params={"path": path}, headers=self._headers(), timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
     def delete_file(self, path: str) -> bool:
         url = f"{self.base_url}/file"
         resp = requests.delete(url, params={"path": path}, headers=self._headers(), timeout=15)

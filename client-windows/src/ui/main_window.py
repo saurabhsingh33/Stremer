@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
@@ -6,6 +6,7 @@ from api.client import APIClient
 from ui.login_dialog import LoginDialog
 from file_browser.browser_widget import BrowserWidget
 from media.vlc_player import play_url
+from ui.details_panel import DetailsPanel
 
 
 class MainWindow(QMainWindow):
@@ -52,17 +53,27 @@ class MainWindow(QMainWindow):
         self.view_combo.currentTextChanged.connect(self._on_view_change)
         toolbar.addWidget(self.view_combo)
 
-        # Central widget
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout()
-        central.setLayout(layout)
+        # Central splitter: browser left, details right
+        self.splitter = QSplitter(self)
+        self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
         self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy)
-        # Update action enabled states when path changes
         self.browser.path_changed.connect(self._update_nav_actions)
-        layout.addWidget(self.browser)
+        self.splitter.addWidget(self.browser)
+
+        # Details panel
+        self.details = DetailsPanel(api_client=None)
+        self.splitter.addWidget(self.details)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+        self._last_details_width = 360
+        # Start collapsed until selection
+        self._set_details_visible(False)
+        # Update details on selection change and clear on path change
+        self.browser.selection_changed.connect(self._on_selection)
+        self.browser.selection_cleared.connect(self._on_selection_cleared)
+        self.browser.path_changed.connect(self._on_path_changed)
 
         # Status bar
         self.setStatusBar(QStatusBar(self))
@@ -106,6 +117,7 @@ class MainWindow(QMainWindow):
             self.api_client = client
             # Provide API client to browser now that we're authenticated
             self.browser.set_api_client(client)
+            self.details.set_api_client(client)
             self.statusBar().showMessage(f"Connected to {base}")
             self.login_action.setText("Logout")
             self.browser.load_path("/")
@@ -128,6 +140,42 @@ class MainWindow(QMainWindow):
     def _update_nav_actions(self, _path: str):
         self.back_action.setEnabled(self.browser.can_go_back())
         self.up_action.setEnabled(self.browser.can_go_up())
+
+    def _set_details_visible(self, visible: bool):
+        # Adjust splitter sizes to show/hide details pane
+        if not self.splitter:
+            return
+        sizes = self.splitter.sizes()
+        if not sizes or len(sizes) < 2:
+            return
+        left = sizes[0]
+        right = sizes[1]
+        if visible:
+            # Only expand if currently hidden (width 0). Otherwise keep user's width.
+            if right == 0:
+                target = max(self._last_details_width, 240)
+                total = max(1, sum(sizes))
+                if target >= total:
+                    target = max(1, total // 3)
+                self.splitter.setSizes([max(1, total - target), target])
+        else:
+            # Save current right width if not zero
+            if right > 0:
+                self._last_details_width = right
+            self.splitter.setSizes([sum(sizes), 0])
+
+    def _on_selection(self, item: dict):
+        self.details.show_item(item)
+        self._set_details_visible(True)
+
+    def _on_selection_cleared(self):
+        self.details.clear()
+        self._set_details_visible(False)
+
+    def _on_path_changed(self, _p: str):
+        self._update_nav_actions(_p)
+        self.details.clear()
+        self._set_details_visible(False)
 
     def _go_back(self):
         self.browser.go_back()

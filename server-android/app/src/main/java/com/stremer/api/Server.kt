@@ -79,6 +79,89 @@ object Server {
                         )
                     }
 
+                    // Metadata endpoint
+                    get("/meta") {
+                        try {
+                            val path = call.request.queryParameters["path"] ?: return@get call.respondText(
+                                "Missing path",
+                                status = HttpStatusCode.BadRequest
+                            )
+                            val file = ServiceLocator.getDocumentFile(path.trim('/'))
+                            if (file == null) {
+                                return@get call.respondText("Not found", status = HttpStatusCode.NotFound)
+                            }
+                            val isDir = file.isDirectory
+                            val name = file.name ?: "unknown"
+                            var size: Long? = if (file.isFile) file.length() else null
+                            val lastMod = try { file.lastModified() } catch (_: Exception) { null }
+                            var mime: String? = file.type ?: if (isDir) "inode/directory" else "application/octet-stream"
+
+                            var width: Int? = null
+                            var height: Int? = null
+                            var durationMs: Long? = null
+                            var itemCount: Int? = null
+
+                            val lower = name.lowercase()
+                            val ctx = ServiceLocator.context()
+                            if (!isDir && ctx != null) {
+                                if (lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".avi") || lower.endsWith(".mov") || lower.endsWith(".webm") || lower.endsWith(".mp3") || lower.endsWith(".m4a") || lower.endsWith(".flac") || lower.endsWith(".3gp") || lower.endsWith(".ts")) {
+                                    try {
+                                        val retriever = android.media.MediaMetadataRetriever()
+                                        retriever.setDataSource(ctx, file.uri)
+                                        val dur = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                                        val w = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+                                        val h = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+                                        durationMs = dur
+                                        if (w != null && h != null) {
+                                            width = w
+                                            height = h
+                                        }
+                                        retriever.release()
+                                    } catch (e: Exception) {
+                                        android.util.Log.w("Server", "Media metadata error: ${e.message}")
+                                    }
+                                } else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif") || lower.endsWith(".bmp") || lower.endsWith(".webp") || lower.endsWith(".heic") || lower.endsWith(".heif")) {
+                                    try {
+                                        val opts = android.graphics.BitmapFactory.Options()
+                                        opts.inJustDecodeBounds = true
+                                        ServiceLocator.openInputStream(path.trim('/'))?.use { ins ->
+                                            android.graphics.BitmapFactory.decodeStream(ins, null, opts)
+                                        }
+                                        width = opts.outWidth
+                                        height = opts.outHeight
+                                    } catch (e: Exception) {
+                                        android.util.Log.w("Server", "Image bounds error: ${e.message}")
+                                    }
+                                }
+                            }
+
+                            if (isDir) {
+                                try {
+                                    val children = file.listFiles()
+                                    itemCount = children?.size
+                                } catch (_: Exception) {
+                                    itemCount = null
+                                }
+                            }
+
+                            val meta = MetaResponse(
+                                name = name,
+                                type = if (isDir) "dir" else "file",
+                                mime = mime,
+                                size = size,
+                                lastModified = lastMod,
+                                width = width,
+                                height = height,
+                                durationMs = durationMs,
+                                itemCount = itemCount
+                            )
+                            call.respond(meta)
+                        } catch (e: Exception) {
+                            android.util.Log.e("Server", "Meta endpoint error: ${e.message}")
+                            call.respondText("Error getting metadata", status = HttpStatusCode.InternalServerError)
+                        }
+                    }
+
                     // Thumbnail endpoint (auth via bearer header)
                     get("/thumb") {
                         try {

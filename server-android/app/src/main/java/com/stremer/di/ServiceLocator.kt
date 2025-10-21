@@ -42,6 +42,8 @@ object ServiceLocator {
 
     fun context(): android.content.Context? = saf?.getContext()
 
+    fun getDocumentFile(path: String): androidx.documentfile.provider.DocumentFile? = saf?.getFile(path)
+
     fun delete(path: String) = saf?.deleteFile(path) ?: false
     fun copy(src: String, dst: String) = saf?.copyFile(src, dst) ?: false
 }
