@@ -1,12 +1,16 @@
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from api.client import APIClient
 from ui.login_dialog import LoginDialog
 from file_browser.browser_widget import BrowserWidget
 from media.vlc_player import play_url
 from ui.details_panel import DetailsPanel
+import os
+import tempfile
+import uuid
+import requests
 
 
 class MainWindow(QMainWindow):
@@ -58,7 +62,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
 
@@ -182,6 +186,64 @@ class MainWindow(QMainWindow):
 
     def _go_up(self):
         self.browser.go_up()
+
+    class _DownloadThread(QThread):
+        progress = pyqtSignal(int)
+        done = pyqtSignal(str)
+        error = pyqtSignal(str)
+
+        def __init__(self, url: str, dest: str, headers: dict | None = None):
+            super().__init__()
+            self.url = url
+            self.dest = dest
+            self.headers = headers or {}
+
+        def run(self):
+            try:
+                with requests.get(self.url, headers=self.headers, stream=True, timeout=60) as r:
+                    r.raise_for_status()
+                    total = int(r.headers.get('Content-Length') or 0)
+                    downloaded = 0
+                    with open(self.dest, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if total > 0:
+                                    self.progress.emit(int(downloaded * 100 / total))
+                self.done.emit(self.dest)
+            except Exception as e:
+                self.error.emit(str(e))
+
+    def _open_default(self, path: str):
+        if not self.api_client:
+            return
+        # Build temp destination with original extension
+        base_name = os.path.basename(path).lstrip('/')
+        if not base_name:
+            base_name = "file"
+        dest = os.path.join(tempfile.gettempdir(), f"stremer_{uuid.uuid4().hex}_{base_name}")
+        url = self.api_client.stream_url(path)
+        headers = {}
+        # Prefer Authorization header if token exists, although token is already in URL
+        if self.api_client.token:
+            headers["Authorization"] = f"Bearer {self.api_client.token}"
+
+        self.statusBar().showMessage(f"Downloading {base_name}…")
+        self._dl = self._DownloadThread(url, dest, headers)
+        self._dl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading {base_name}… {p}%"))
+        def _done(local_path: str):
+            self.statusBar().showMessage(f"Opening {base_name}", 3000)
+            try:
+                os.startfile(local_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Open failed", f"Could not open file: {e}")
+        def _err(msg: str):
+            QMessageBox.critical(self, "Download failed", msg)
+            self.statusBar().clearMessage()
+        self._dl.done.connect(_done)
+        self._dl.error.connect(_err)
+        self._dl.start()
 
     def _play(self, path: str):
         if not self.api_client:

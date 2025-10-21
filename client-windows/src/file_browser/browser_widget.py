@@ -20,12 +20,13 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
         self.on_delete = on_delete
         self.on_copy = on_copy
+        self.on_open = on_open
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -220,13 +221,20 @@ class BrowserWidget(QWidget):
             return
         menu = QMenu(self)
         if item["type"] == "file":
-            play_act = menu.addAction("Play in VLC")
+            name_lower = item["name"].lower()
+            if self._is_video(name_lower):
+                menu.addAction("Play in VLC")
+            else:
+                menu.addAction("Open")
         copy_act = menu.addAction("Copy...")
         del_act = menu.addAction("Delete")
         act = menu.exec(self.table.mapToGlobal(pos))
         if act:
-            if item["type"] == "file" and act.text() == "Play in VLC":
+            name_lower = item["name"].lower()
+            if act.text() == "Play in VLC" and item["type"] == "file" and self._is_video(name_lower):
                 self.on_play(item["path"])
+            elif act.text() == "Open" and item["type"] == "file" and self.on_open:
+                self.on_open(item["path"])
             elif act.text() == "Copy...":
                 self.on_copy(item["path"])
             elif act.text() == "Delete":
@@ -239,13 +247,20 @@ class BrowserWidget(QWidget):
         data = item_widget.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
         if data["type"] == "file":
-            menu.addAction("Play in VLC")
+            name_lower = data["name"].lower()
+            if self._is_video(name_lower):
+                menu.addAction("Play in VLC")
+            else:
+                menu.addAction("Open")
         menu.addAction("Copy...")
         menu.addAction("Delete")
         act = menu.exec(self.icon_list.mapToGlobal(pos))
         if act:
-            if data["type"] == "file" and act.text() == "Play in VLC":
+            name_lower = data["name"].lower()
+            if act.text() == "Play in VLC" and data["type"] == "file" and self._is_video(name_lower):
                 self.on_play(data["path"])
+            elif act.text() == "Open" and data["type"] == "file" and self.on_open:
+                self.on_open(data["path"])
             elif act.text() == "Copy...":
                 self.on_copy(data["path"])
             elif act.text() == "Delete":
@@ -268,6 +283,11 @@ class BrowserWidget(QWidget):
 
     def set_api_client(self, api_client):
         self.api_client = api_client
+
+    def _is_video(self, name_lower: str) -> bool:
+        return name_lower.endswith((
+            ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".3gp", ".ts"
+        ))
 
     def _on_selection_changed(self):
         item = self._selected_item()
