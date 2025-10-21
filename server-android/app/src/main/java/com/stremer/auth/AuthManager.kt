@@ -1,6 +1,14 @@
 package com.stremer.auth
 
+import com.stremer.settings.SettingsRepository
+
 object AuthManager {
-    private val users = mapOf("admin" to "password")
-    fun validate(username: String, password: String): Boolean = users[username] == password
+    fun isEnabled(): Boolean = SettingsRepository.isAuthEnabled()
+
+    fun validate(username: String, password: String): Boolean {
+        if (!isEnabled()) return true
+        val u = SettingsRepository.getUsername()
+        val p = SettingsRepository.getPassword()
+        return username == u && password == p
+    }
 }

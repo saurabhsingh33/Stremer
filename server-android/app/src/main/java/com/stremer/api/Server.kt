@@ -24,7 +24,10 @@ object Server {
             install(Authentication) {
                 bearer("auth-bearer") {
                     authenticate { tokenCredential ->
-                        if (tokenCredential.token == ServiceLocator.token) {
+                        // If auth disabled, allow any request
+                        if (!com.stremer.auth.AuthManager.isEnabled()) {
+                            UserIdPrincipal("anon")
+                        } else if (tokenCredential.token == ServiceLocator.token) {
                             UserIdPrincipal("user")
                         } else null
                     }
@@ -36,7 +39,8 @@ object Server {
                     val params = call.receiveParameters()
                     val user = params["username"]
                     val pass = params["password"]
-                    if (ServiceLocator.validate(user, pass)) {
+                    // If auth disabled, issue token regardless (or a fixed token)
+                    if (!com.stremer.auth.AuthManager.isEnabled() || ServiceLocator.validate(user, pass)) {
                         ServiceLocator.issueTokenFor(user ?: "user")
                         call.respond(mapOf("token" to ServiceLocator.token))
                     } else {
@@ -248,10 +252,12 @@ object Server {
                     val tokenParam = call.request.queryParameters["token"]
                     val authHeader = call.request.headers["Authorization"]?.removePrefix("Bearer ")
 
-                    val validToken = tokenParam ?: authHeader
-                    if (validToken != ServiceLocator.token) {
-                        android.util.Log.e("Server", "Invalid token. Expected: ${ServiceLocator.token}, Got: $validToken")
-                        return@get call.respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
+                    if (com.stremer.auth.AuthManager.isEnabled()) {
+                        val validToken = tokenParam ?: authHeader
+                        if (validToken != ServiceLocator.token) {
+                            android.util.Log.e("Server", "Invalid token. Expected: ${ServiceLocator.token}, Got: $validToken")
+                            return@get call.respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
+                        }
                     }
 
                     android.util.Log.d("Server", "Streaming file: $path")

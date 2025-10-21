@@ -3,6 +3,7 @@ package com.stremer.di
 import android.app.Activity
 import com.stremer.auth.AuthManager
 import com.stremer.saf.SafHelper
+import com.stremer.settings.SettingsRepository
 import android.net.Uri
 import com.stremer.files.FileItem
 
@@ -12,6 +13,7 @@ object ServiceLocator {
 
     fun init(activity: Activity) {
         saf = SafHelper(activity)
+        SettingsRepository.init(activity)
     }
 
     fun setRoot(uri: Uri) {
