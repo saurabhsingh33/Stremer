@@ -48,4 +48,5 @@ object ServiceLocator {
 
     fun delete(path: String) = saf?.deleteFile(path) ?: false
     fun copy(src: String, dst: String) = saf?.copyFile(src, dst) ?: false
+    fun rename(path: String, newName: String) = saf?.renameFile(path, newName) ?: false
 }

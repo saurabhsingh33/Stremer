@@ -43,3 +43,8 @@ class APIClient:
         url = f"{self.base_url}/copy"
         resp = requests.post(url, json={"src": src, "dst": dst}, headers=self._headers(), timeout=30)
         return resp.status_code == 200
+
+    def rename_file(self, path: str, new_name: str) -> bool:
+        url = f"{self.base_url}/rename"
+        resp = requests.post(url, json={"path": path, "newName": new_name}, headers=self._headers(), timeout=15)
+        return resp.status_code == 200

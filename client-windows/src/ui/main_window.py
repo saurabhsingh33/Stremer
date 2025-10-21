@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter, QInputDialog
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
 
@@ -292,6 +292,25 @@ class MainWindow(QMainWindow):
                 self._refresh()
             else:
                 QMessageBox.critical(self, "Error", "Copy failed")
+
+    def _rename(self, path: str):
+        if not self.api_client:
+            return
+        base_name = os.path.basename(path).lstrip('/')
+        new_name, ok = QInputDialog.getText(self, "Rename", f"Enter new name for:\n{base_name}", text=base_name)
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == base_name:
+            return
+        try:
+            success = self.api_client.rename_file(path, new_name)
+            if success:
+                self._refresh()
+            else:
+                QMessageBox.critical(self, "Error", "Rename failed")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Rename failed: {e}")
 
     # --- Session persistence ---
     def _session_file(self) -> Path:

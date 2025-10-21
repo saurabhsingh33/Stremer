@@ -20,13 +20,14 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
         self.on_delete = on_delete
         self.on_copy = on_copy
         self.on_open = on_open
+        self.on_rename = on_rename
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -226,6 +227,7 @@ class BrowserWidget(QWidget):
                 menu.addAction("Play in VLC")
             else:
                 menu.addAction("Open")
+        menu.addAction("Rename")
         copy_act = menu.addAction("Copy...")
         del_act = menu.addAction("Delete")
         act = menu.exec(self.table.mapToGlobal(pos))
@@ -235,6 +237,8 @@ class BrowserWidget(QWidget):
                 self.on_play(item["path"])
             elif act.text() == "Open" and item["type"] == "file" and self.on_open:
                 self.on_open(item["path"])
+            elif act.text() == "Rename" and self.on_rename:
+                self.on_rename(item["path"])
             elif act.text() == "Copy...":
                 self.on_copy(item["path"])
             elif act.text() == "Delete":
@@ -252,6 +256,7 @@ class BrowserWidget(QWidget):
                 menu.addAction("Play in VLC")
             else:
                 menu.addAction("Open")
+        menu.addAction("Rename")
         menu.addAction("Copy...")
         menu.addAction("Delete")
         act = menu.exec(self.icon_list.mapToGlobal(pos))
@@ -261,6 +266,8 @@ class BrowserWidget(QWidget):
                 self.on_play(data["path"])
             elif act.text() == "Open" and data["type"] == "file" and self.on_open:
                 self.on_open(data["path"])
+            elif act.text() == "Rename" and self.on_rename:
+                self.on_rename(data["path"])
             elif act.text() == "Copy...":
                 self.on_copy(data["path"])
             elif act.text() == "Delete":

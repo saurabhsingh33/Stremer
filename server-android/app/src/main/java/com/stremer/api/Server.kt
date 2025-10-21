@@ -83,6 +83,18 @@ object Server {
                         )
                     }
 
+                    // Rename endpoint
+                    post("/rename") {
+                        val json = call.receive<Map<String, String>>()
+                        val path = json["path"] ?: return@post call.respondText("Missing path", status = HttpStatusCode.BadRequest)
+                        val newName = json["newName"] ?: return@post call.respondText("Missing newName", status = HttpStatusCode.BadRequest)
+                        val ok = ServiceLocator.rename(path.trim('/'), newName.trim('/'))
+                        if (ok) call.respond(mapOf("status" to "renamed")) else call.respondText(
+                            "Rename failed",
+                            status = HttpStatusCode.InternalServerError
+                        )
+                    }
+
                     // Metadata endpoint
                     get("/meta") {
                         try {

@@ -107,6 +107,16 @@ class SafHelper(private val activity: Activity) {
         return true
     }
 
+    fun renameFile(path: String, newName: String): Boolean {
+        val file = getFile(path) ?: return false
+        return try {
+            file.renameTo(newName)
+        } catch (e: Exception) {
+            android.util.Log.e("SafHelper", "Rename failed: ${e.message}")
+            false
+        }
+    }
+
     fun openInputStream(path: String) = getFile(path)?.let { file ->
         activity.contentResolver.openInputStream(file.uri)
     }
