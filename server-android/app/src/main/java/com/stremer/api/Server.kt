@@ -78,6 +78,81 @@ object Server {
                             status = HttpStatusCode.InternalServerError
                         )
                     }
+
+                    // Thumbnail endpoint (auth via bearer header)
+                    get("/thumb") {
+                        try {
+                            val path = call.request.queryParameters["path"] ?: return@get call.respondText(
+                                "Missing path",
+                                status = HttpStatusCode.BadRequest
+                            )
+
+                            val uri = ServiceLocator.getUri(path.trim('/'))
+                            if (uri == null) {
+                                return@get call.respondText("Not found", status = HttpStatusCode.NotFound)
+                            }
+
+                            // Decide target size based on query or defaults
+                            val maxW = call.request.queryParameters["w"]?.toIntOrNull() ?: 256
+                            val maxH = call.request.queryParameters["h"]?.toIntOrNull() ?: 256
+
+                            // Use different generation for images vs videos by file extension
+                            val lower = path.lowercase()
+                            val isVideo = lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".avi") || lower.endsWith(".mov") || lower.endsWith(".webm")
+                            val isImage = lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif") || lower.endsWith(".bmp") || lower.endsWith(".webp")
+
+                            // Generate Bitmap
+                            val bitmap: android.graphics.Bitmap? = try {
+                                if (isVideo) {
+                                    val retriever = android.media.MediaMetadataRetriever()
+                                    val ctx = ServiceLocator.context()
+                                    if (ctx != null) {
+                                        retriever.setDataSource(ctx, uri)
+                                    } else {
+                                        // Fallback: attempt without context (may fail for content URIs)
+                                        retriever.setDataSource(uri.toString(), java.util.HashMap())
+                                    }
+                                    val frame = retriever.getFrameAtTime(0)
+                                    retriever.release()
+                                    frame
+                                } else if (isImage) {
+                                    val input = ServiceLocator.openInputStream(path.trim('/'))
+                                    if (input != null) {
+                                        input.use { android.graphics.BitmapFactory.decodeStream(it) }
+                                    } else null
+                                } else null
+                            } catch (e: Exception) {
+                                android.util.Log.e("Server", "Thumbnail error: ${e.message}")
+                                null
+                            }
+
+                            if (bitmap == null) {
+                                return@get call.respondText("Unsupported or failed to create thumbnail", status = HttpStatusCode.UnsupportedMediaType)
+                            }
+
+                            // Scale down preserving aspect ratio
+                            val srcW = bitmap.width
+                            val srcH = bitmap.height
+                            val scale = minOf(maxW.toFloat() / srcW.toFloat(), maxH.toFloat() / srcH.toFloat(), 1.0f)
+                            val dstW = (srcW * scale).toInt().coerceAtLeast(1)
+                            val dstH = (srcH * scale).toInt().coerceAtLeast(1)
+                            val thumb = if (dstW != srcW || dstH != srcH) {
+                                android.graphics.Bitmap.createScaledBitmap(bitmap, dstW, dstH, true)
+                            } else bitmap
+
+                            // Encode as JPEG for size/compat
+                            val baos = java.io.ByteArrayOutputStream()
+                            thumb.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, baos)
+                            val bytes = baos.toByteArray()
+
+                            // Respond with cache headers
+                            call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "public, max-age=604800")
+                            call.respondBytes(bytes, ContentType.Image.JPEG)
+                        } catch (e: Exception) {
+                            android.util.Log.e("Server", "Thumb endpoint error: ${e.message}")
+                            call.respondText("Error generating thumbnail", status = HttpStatusCode.InternalServerError)
+                        }
+                    }
                 }
 
                 // Stream endpoint outside auth block to support token in query param

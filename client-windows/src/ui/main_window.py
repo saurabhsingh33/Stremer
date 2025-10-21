@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
@@ -29,6 +29,14 @@ class MainWindow(QMainWindow):
         self.refresh_action = QAction("Refresh", self)
         self.refresh_action.triggered.connect(self._refresh)
         toolbar.addAction(self.refresh_action)
+
+        # View mode selector
+        self.view_combo = QComboBox(self)
+        self.view_combo.addItems(["List", "Icons", "Thumbnails"])
+        self.view_combo.setCurrentIndex(0)
+        self.view_combo.setToolTip("Change view mode")
+        self.view_combo.currentTextChanged.connect(self._on_view_change)
+        toolbar.addWidget(self.view_combo)
 
         # Central widget
         central = QWidget()
@@ -97,6 +105,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Refresh failed: {e}")
         else:
             QMessageBox.information(self, "Not connected", "Login first.")
+
+    def _on_view_change(self, text: str):
+        self.browser.set_view_mode(text.lower())
 
     def _play(self, path: str):
         if not self.api_client:

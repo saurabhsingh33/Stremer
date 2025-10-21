@@ -22,6 +22,9 @@ class APIClient:
     def stream_url(self, path: str) -> str:
         return f"{self.base_url}/stream?path={requests.utils.quote(path, safe='')}&token={self.token or ''}"
 
+    def thumb_url(self, path: str, w: int = 256, h: int = 256) -> str:
+        return f"{self.base_url}/thumb?path={requests.utils.quote(path, safe='')}&w={w}&h={h}"
+
     def delete_file(self, path: str) -> bool:
         url = f"{self.base_url}/file"
         resp = requests.delete(url, params={"path": path}, headers=self._headers(), timeout=15)

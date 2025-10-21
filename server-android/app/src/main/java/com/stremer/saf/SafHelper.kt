@@ -63,6 +63,10 @@ class SafHelper(private val activity: Activity) {
         return resolve(path)
     }
 
+    fun getUri(path: String): Uri? {
+        return getFile(path)?.uri
+    }
+
     fun getFileInfo(path: String): com.stremer.files.FileItem? {
         val file = getFile(path) ?: return null
         return try {
@@ -106,4 +110,6 @@ class SafHelper(private val activity: Activity) {
     fun openInputStream(path: String) = getFile(path)?.let { file ->
         activity.contentResolver.openInputStream(file.uri)
     }
+
+    fun getContext(): android.content.Context = activity
 }

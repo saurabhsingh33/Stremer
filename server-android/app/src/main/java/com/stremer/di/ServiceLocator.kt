@@ -38,6 +38,10 @@ object ServiceLocator {
 
     fun openInputStream(path: String) = saf?.openInputStream(path)
 
+    fun getUri(path: String) = saf?.getUri(path)
+
+    fun context(): android.content.Context? = saf?.getContext()
+
     fun delete(path: String) = saf?.deleteFile(path) ?: false
     fun copy(src: String, dst: String) = saf?.copyFile(src, dst) ?: false
 }
