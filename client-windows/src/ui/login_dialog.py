@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QLabel, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QLabel, QPushButton, QHBoxLayout, QCheckBox
 
 
 class LoginDialog(QDialog):
@@ -24,6 +24,11 @@ class LoginDialog(QDialog):
         layout.addWidget(self.user_input)
         layout.addWidget(QLabel("Password"))
         layout.addWidget(self.pass_input)
+
+        # Remember me
+        self.remember_check = QCheckBox("Remember me for 30 days")
+        self.remember_check.setChecked(True)
+        layout.addWidget(self.remember_check)
 
         btns = QHBoxLayout()
         self.login_btn = QPushButton("Login")

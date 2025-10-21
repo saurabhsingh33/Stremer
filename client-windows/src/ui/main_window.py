@@ -134,8 +134,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Connected to {base}")
             self.login_action.setText("Logout")
             self.browser.load_path("/")
-            # Persist session for 30 days
-            self._save_session(base, token, user)
+            # Persist session for 30 days, if requested
+            try:
+                if getattr(dlg, 'remember_check', None) is None or dlg.remember_check.isChecked():
+                    self._save_session(base, token, user)
+                else:
+                    self._clear_saved_session()
+            except Exception:
+                pass
             dlg.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to connect: {e}")
