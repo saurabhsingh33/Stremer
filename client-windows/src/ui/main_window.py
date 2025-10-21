@@ -232,6 +232,57 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.error.emit(str(e))
 
+    class _DownloadDirThread(QThread):
+        progress = pyqtSignal(int)
+        message = pyqtSignal(str)
+        done = pyqtSignal(str)
+        error = pyqtSignal(str)
+
+        def __init__(self, api_client: APIClient, src_dir: str, dest_dir: str):
+            super().__init__()
+            self.api_client = api_client
+            self.src_dir = src_dir if src_dir else "/"
+            self.dest_dir = dest_dir
+
+        def run(self):
+            try:
+                files: list[tuple[str, str]] = []
+                def walk(path: str, rel: str = ""):
+                    items = self.api_client.list_files(path)
+                    for it in items:
+                        name = it.get("name", "")
+                        t = it.get("type", "file")
+                        child_server = f"{path.rstrip('/')}/{name}" if path != "/" else f"/{name}"
+                        child_rel = f"{rel}/{name}" if rel else name
+                        if t == "dir":
+                            walk(child_server, child_rel)
+                        else:
+                            files.append((child_server, child_rel))
+                walk(self.src_dir, "")
+
+                total = len(files)
+                if total == 0:
+                    self.done.emit(self.dest_dir)
+                    return
+                for idx, (server_path, rel) in enumerate(files, start=1):
+                    dest_path = os.path.join(self.dest_dir, rel)
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    url = self.api_client.stream_url(server_path)
+                    headers = {}
+                    if getattr(self.api_client, 'token', None):
+                        headers["Authorization"] = f"Bearer {self.api_client.token}"
+                    with requests.get(url, headers=headers, stream=True, timeout=120) as r:
+                        r.raise_for_status()
+                        with open(dest_path, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=1024 * 64):
+                                if chunk:
+                                    f.write(chunk)
+                    pct = int(idx * 100 / total)
+                    self.progress.emit(pct)
+                self.done.emit(self.dest_dir)
+            except Exception as e:
+                self.error.emit(str(e))
+
     def _open_default(self, path: str):
         if not self.api_client:
             return
@@ -285,13 +336,47 @@ class MainWindow(QMainWindow):
     def _copy(self, src_path: str):
         if not self.api_client:
             return
-        dst, _ = QFileDialog.getSaveFileName(self, "Copy to server path", src_path)
-        if dst:
-            ok = self.api_client.copy_file(src_path, dst)
-            if ok:
-                self._refresh()
-            else:
-                QMessageBox.critical(self, "Error", "Copy failed")
+        # Determine if directory or file
+        try:
+            meta = self.api_client.get_meta(src_path)
+            is_dir = (meta.get("type") == "dir")
+        except Exception:
+            is_dir = False
+        dest_folder = QFileDialog.getExistingDirectory(self, "Select destination folder")
+        if not dest_folder:
+            return
+        base_name = os.path.basename(src_path).lstrip('/') or "download"
+        if is_dir:
+            target_dir = os.path.join(dest_folder, base_name)
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Cannot create folder: {e}")
+                return
+            self.statusBar().showMessage(f"Downloading folder {base_name}…")
+            self._ddl = self._DownloadDirThread(self.api_client, src_path, target_dir)
+            self._ddl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading folder {base_name}… {p}%"))
+            self._ddl.message.connect(lambda m: self.statusBar().showMessage(m))
+            self._ddl.done.connect(lambda p: self.statusBar().showMessage(f"Folder saved to {p}", 5000))
+            self._ddl.error.connect(lambda msg: QMessageBox.critical(self, "Download failed", msg))
+            self._ddl.start()
+        else:
+            dest = os.path.join(dest_folder, base_name)
+            url = self.api_client.stream_url(src_path)
+            headers = {}
+            if self.api_client.token:
+                headers["Authorization"] = f"Bearer {self.api_client.token}"
+            self.statusBar().showMessage(f"Downloading {base_name}…")
+            self._dl = self._DownloadThread(url, dest, headers)
+            self._dl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading {base_name}… {p}%"))
+            def _done(local_path: str):
+                self.statusBar().showMessage(f"Saved to {local_path}", 5000)
+            def _err(msg: str):
+                QMessageBox.critical(self, "Download failed", msg)
+                self.statusBar().clearMessage()
+            self._dl.done.connect(_done)
+            self._dl.error.connect(_err)
+            self._dl.start()
 
     def _rename(self, path: str):
         if not self.api_client:

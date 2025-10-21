@@ -228,7 +228,7 @@ class BrowserWidget(QWidget):
             else:
                 menu.addAction("Open")
         menu.addAction("Rename")
-        copy_act = menu.addAction("Copy...")
+        copy_act = menu.addAction("Download")
         del_act = menu.addAction("Delete")
         act = menu.exec(self.table.mapToGlobal(pos))
         if act:
@@ -239,7 +239,7 @@ class BrowserWidget(QWidget):
                 self.on_open(item["path"])
             elif act.text() == "Rename" and self.on_rename:
                 self.on_rename(item["path"])
-            elif act.text() == "Copy...":
+            elif act.text() == "Download":
                 self.on_copy(item["path"])
             elif act.text() == "Delete":
                 self.on_delete(item["path"])
@@ -257,7 +257,7 @@ class BrowserWidget(QWidget):
             else:
                 menu.addAction("Open")
         menu.addAction("Rename")
-        menu.addAction("Copy...")
+        menu.addAction("Download")
         menu.addAction("Delete")
         act = menu.exec(self.icon_list.mapToGlobal(pos))
         if act:
@@ -268,7 +268,7 @@ class BrowserWidget(QWidget):
                 self.on_open(data["path"])
             elif act.text() == "Rename" and self.on_rename:
                 self.on_rename(data["path"])
-            elif act.text() == "Copy...":
+            elif act.text() == "Download":
                 self.on_copy(data["path"])
             elif act.text() == "Delete":
                 self.on_delete(data["path"])
