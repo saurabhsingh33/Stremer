@@ -374,4 +374,6 @@ object Server {
         engine?.stop(1000, 2000)
         engine = null
     }
+
+    fun isRunning(): Boolean = engine != null
 }
