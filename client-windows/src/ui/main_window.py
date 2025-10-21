@@ -11,6 +11,9 @@ import os
 import tempfile
 import uuid
 import requests
+import json
+import time
+from pathlib import Path
 
 
 class MainWindow(QMainWindow):
@@ -82,6 +85,11 @@ class MainWindow(QMainWindow):
         # Status bar
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage("Not connected")
+        # Try restore previous session
+        try:
+            self._try_restore_session()
+        except Exception:
+            pass
 
     def _api(self):
         if not self.api_client:
@@ -97,6 +105,7 @@ class MainWindow(QMainWindow):
             self.browser.load_path("/")
             self.statusBar().showMessage("Not connected")
             self.login_action.setText("Login")
+            self._clear_saved_session()
         else:
             dlg = LoginDialog()
             dlg.login_btn.clicked.connect(lambda: self._do_login(dlg))
@@ -125,6 +134,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Connected to {base}")
             self.login_action.setText("Logout")
             self.browser.load_path("/")
+            # Persist session for 30 days
+            self._save_session(base, token, user)
             dlg.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to connect: {e}")
@@ -275,3 +286,66 @@ class MainWindow(QMainWindow):
                 self._refresh()
             else:
                 QMessageBox.critical(self, "Error", "Copy failed")
+
+    # --- Session persistence ---
+    def _session_file(self) -> Path:
+        appdata = os.getenv('APPDATA')
+        if appdata:
+            base = Path(appdata) / 'Stremer'
+        else:
+            base = Path.home() / '.stremer'
+        base.mkdir(parents=True, exist_ok=True)
+        return base / 'session.json'
+
+    def _save_session(self, base_url: str, token: str, username: str | None = None):
+        data = {
+            'base_url': base_url,
+            'token': token,
+            'username': username,
+            'expires_at': int(time.time()) + 30 * 24 * 3600
+        }
+        try:
+            self._session_file().write_text(json.dumps(data))
+        except Exception:
+            pass
+
+    def _clear_saved_session(self):
+        try:
+            fp = self._session_file()
+            if fp.exists():
+                fp.unlink()
+        except Exception:
+            pass
+
+    def _try_restore_session(self):
+        fp = self._session_file()
+        if not fp.exists():
+            return
+        try:
+            data = json.loads(fp.read_text())
+        except Exception:
+            return
+        expires = data.get('expires_at', 0)
+        if int(time.time()) >= int(expires):
+            # Expired
+            self._clear_saved_session()
+            return
+        base = data.get('base_url')
+        token = data.get('token')
+        if not base or not token:
+            return
+        client = APIClient(base)
+        client.set_token(token)
+        # Try a light call to verify; if fails, clear session
+        try:
+            self.api_client = client
+            self.browser.set_api_client(client)
+            self.details.set_api_client(client)
+            self.browser.load_path("/")
+            self.statusBar().showMessage(f"Connected to {base}")
+            self.login_action.setText("Logout")
+        except Exception:
+            self.api_client = None
+            self.browser.set_api_client(None)
+            self._clear_saved_session()
+            self.statusBar().showMessage("Not connected")
