@@ -1,0 +1,5 @@
+PyQt6==6.7.0
+requests==2.32.3
+qt-material==2.14
+python-dotenv==1.0.1
+python-vlc==3.0.18122

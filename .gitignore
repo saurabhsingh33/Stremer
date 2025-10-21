@@ -1,0 +1,69 @@
+# Global OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+client-windows/vlc-log.txt
+
+# Python caches and build artifacts
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+site/
+.build/
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Python env/config
+.env
+.env.*
+*.env
+
+# VS Code / JetBrains
+.vscode/
+**/.idea/
+*.iml
+
+# Android/Gradle
+**/.gradle/
+**/build/
+local.properties
+**/.externalNativeBuild/
+**/.cxx/
+**/captures/
+# Android outputs
+*.apk
+*.ap_
+*.aab
+# Android signing / keystores (never commit)
+*.keystore
+*.jks
+**/.signing/
+
+# Kotlin/Java
+out/
+
+# Windows
+$RECYCLE.BIN/
+*.tmp
+~$*
+
+# Misc
+*.swp
+*.swo
