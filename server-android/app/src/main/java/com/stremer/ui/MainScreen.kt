@@ -25,8 +25,12 @@ fun MainScreen() {
             storageSelected = true
         }
     }
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text(text = "Stremer Android Server", style = MaterialTheme.typography.headlineMedium)
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text(
+            text = "Stremer Android Server",
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
         Spacer(modifier = Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = {
@@ -40,11 +44,15 @@ fun MainScreen() {
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Text(text = if (serverRunning) "Server is running on LAN" else "Server is stopped")
+        Text(
+            text = if (serverRunning) "Server is running on LAN" else "Server is stopped",
+            color = MaterialTheme.colorScheme.onBackground
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = if (storageSelected) "✓ Storage selected" else "⚠ No storage selected",
-            style = MaterialTheme.typography.bodyMedium
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground
         )
     }
 }
