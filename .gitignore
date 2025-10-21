@@ -7,6 +7,8 @@ desktop.ini
 *.log
 logs/
 client-windows/vlc-log.txt
+*.hprof
+*.hprof.gz
 
 # Python caches and build artifacts
 **/__pycache__/
