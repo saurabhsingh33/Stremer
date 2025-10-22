@@ -55,7 +55,8 @@ class MainWindow(QMainWindow):
         # View mode selector
         self.view_combo = QComboBox(self)
         self.view_combo.addItems(["List", "Icons", "Thumbnails"])
-        self.view_combo.setCurrentIndex(0)
+        # Default to Thumbnails view
+        self.view_combo.setCurrentIndex(2)
         self.view_combo.setToolTip("Change view mode")
         self.view_combo.currentTextChanged.connect(self._on_view_change)
         toolbar.addWidget(self.view_combo)
@@ -68,6 +69,11 @@ class MainWindow(QMainWindow):
         self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
+        # Ensure initial view mode matches combobox selection (Thumbnails)
+        try:
+            self._on_view_change(self.view_combo.currentText())
+        except Exception:
+            pass
 
         # Details panel
         self.details = DetailsPanel(api_client=None)
