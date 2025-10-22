@@ -20,7 +20,7 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
@@ -28,6 +28,7 @@ class BrowserWidget(QWidget):
         self.on_copy = on_copy
         self.on_open = on_open
         self.on_rename = on_rename
+        self.on_properties = on_properties
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -230,6 +231,7 @@ class BrowserWidget(QWidget):
         menu.addAction("Rename")
         copy_act = menu.addAction("Download")
         del_act = menu.addAction("Delete")
+        props_act = menu.addAction("Properties")
         act = menu.exec(self.table.mapToGlobal(pos))
         if act:
             name_lower = item["name"].lower()
@@ -243,6 +245,8 @@ class BrowserWidget(QWidget):
                 self.on_copy(item["path"])
             elif act.text() == "Delete":
                 self.on_delete(item["path"])
+            elif act.text() == "Properties" and self.on_properties:
+                self.on_properties(item)
 
     def _open_context_menu_icons(self, pos: QPoint):
         item_widget = self.icon_list.itemAt(pos)
@@ -259,6 +263,7 @@ class BrowserWidget(QWidget):
         menu.addAction("Rename")
         menu.addAction("Download")
         menu.addAction("Delete")
+        menu.addAction("Properties")
         act = menu.exec(self.icon_list.mapToGlobal(pos))
         if act:
             name_lower = data["name"].lower()
@@ -272,6 +277,8 @@ class BrowserWidget(QWidget):
                 self.on_copy(data["path"])
             elif act.text() == "Delete":
                 self.on_delete(data["path"])
+            elif act.text() == "Properties" and self.on_properties:
+                self.on_properties(data)
 
     def _on_double_click(self):
         item = self._selected_item()

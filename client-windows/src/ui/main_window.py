@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
 
@@ -186,10 +186,11 @@ class MainWindow(QMainWindow):
             self.splitter.setSizes([sum(sizes), 0])
 
     def _on_selection(self, item: dict):
-        self.details.show_item(item)
-        self._set_details_visible(True)
+        # Do not auto-open details; remember last selected item only
+        self._last_selected_item = item
 
     def _on_selection_cleared(self):
+        # Hide details only when explicitly cleared
         self.details.clear()
         self._set_details_visible(False)
 
@@ -197,6 +198,13 @@ class MainWindow(QMainWindow):
         self._update_nav_actions(_p)
         self.details.clear()
         self._set_details_visible(False)
+
+    def _show_properties(self, item: dict):
+        # Show details panel on demand
+        if not item:
+            return
+        self.details.show_item(item)
+        self._set_details_visible(True)
 
     def _go_back(self):
         self.browser.go_back()
