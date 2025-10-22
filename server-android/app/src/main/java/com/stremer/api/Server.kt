@@ -208,16 +208,43 @@ object Server {
                                     if (ctx != null) {
                                         retriever.setDataSource(ctx, uri)
                                     } else {
-                                        // Fallback: attempt without context (may fail for content URIs)
                                         retriever.setDataSource(uri.toString(), java.util.HashMap())
                                     }
-                                    val frame = retriever.getFrameAtTime(0)
+                                    // Use closest sync frame to avoid NULL on exact 0
+                                    val frame = retriever.getFrameAtTime(-1, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                                     retriever.release()
                                     frame
                                 } else if (isImage) {
-                                    val input = ServiceLocator.openInputStream(path.trim('/'))
-                                    if (input != null) {
-                                        input.use { android.graphics.BitmapFactory.decodeStream(it) }
+                                    // Downsample large images to near requested size to avoid OOM and binder slowness
+                                    val fd = ServiceLocator.openInputStream(path.trim('/'))
+                                    if (fd != null) {
+                                        fd.use { input1 ->
+                                            val opts1 = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                            android.graphics.BitmapFactory.decodeStream(input1, null, opts1)
+                                        }
+                                        val opts2 = android.graphics.BitmapFactory.Options().apply {
+                                            inJustDecodeBounds = false
+                                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                                            inDither = true
+                                            inSampleSize = run {
+                                                var sample = 1
+                                                var outW = android.graphics.BitmapFactory.Options().outWidth
+                                                var outH = android.graphics.BitmapFactory.Options().outHeight
+                                                // The above outW/outH won't be set; re-open stream to get bounds properly
+                                                // Safely reopen and compute sample size
+                                                val bOpts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                                ServiceLocator.openInputStream(path.trim('/'))?.use { ins ->
+                                                    android.graphics.BitmapFactory.decodeStream(ins, null, bOpts)
+                                                }
+                                                outW = bOpts.outWidth
+                                                outH = bOpts.outHeight
+                                                while (outW / sample > maxW * 2 || outH / sample > maxH * 2) sample *= 2
+                                                if (sample < 1) 1 else sample
+                                            }
+                                        }
+                                        ServiceLocator.openInputStream(path.trim('/'))?.use { ins2 ->
+                                            android.graphics.BitmapFactory.decodeStream(ins2, null, opts2)
+                                        }
                                     } else null
                                 } else null
                             } catch (e: Exception) {
@@ -226,7 +253,9 @@ object Server {
                             }
 
                             if (bitmap == null) {
-                                return@get call.respondText("Unsupported or failed to create thumbnail", status = HttpStatusCode.UnsupportedMediaType)
+                                // Return empty response so clients can skip drawing a thumb instead of erroring
+                                call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "public, max-age=300")
+                                return@get call.respond(HttpStatusCode.NoContent)
                             }
 
                             // Scale down preserving aspect ratio

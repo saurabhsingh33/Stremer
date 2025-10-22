@@ -34,6 +34,8 @@ class BrowserWidget(QWidget):
         self._net = QNetworkAccessManager(self)
         self._thumb_cache = {}
         self._thumb_queue = {}
+        self._thumb_pending = []  # list of (key_tuple, url)
+        self._thumb_active = 0
         self._back_stack: list[str] = []
         self._forward_stack: list[str] = []
 
@@ -326,27 +328,42 @@ class BrowserWidget(QWidget):
         self._thumb_queue[key] = [list_item]
 
         url = self.api_client.thumb_url(path, self.icon_list.iconSize().width(), self.icon_list.iconSize().height())
-        req = QNetworkRequest(QUrl(url))
-        # Pass bearer to authenticated /thumb
-        if getattr(self.api_client, 'token', None):
-            req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode("utf-8"))
-        reply = self._net.get(req)
+        # Queue request; we'll limit concurrent downloads
+        self._thumb_pending.append((key, url))
+        self._start_next_thumb()
 
-        def _on_finished():
-            data = reply.readAll()
-            reply.deleteLater()
-            if not data:
-                # Clean queue
-                self._thumb_queue.pop(key, None)
-                return
-            pixmap = QPixmap()
-            if pixmap.loadFromData(bytes(data)):
-                # Resize to icon size if larger
-                if pixmap.width() > self.icon_list.iconSize().width() or pixmap.height() > self.icon_list.iconSize().height():
-                    pixmap = pixmap.scaled(self.icon_list.iconSize(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                self._thumb_cache[key] = pixmap
-                for li in self._thumb_queue.get(key, []):
-                    li.setIcon(QIcon(pixmap))
-            self._thumb_queue.pop(key, None)
+    def _start_next_thumb(self):
+        # Limit concurrent thumbnail fetches to reduce load on server/device
+        MAX_CONCURRENT = 4
+        while self._thumb_active < MAX_CONCURRENT and self._thumb_pending:
+            key, url = self._thumb_pending.pop(0)
 
-        reply.finished.connect(_on_finished)
+            req = QNetworkRequest(QUrl(url))
+            if getattr(self.api_client, 'token', None):
+                req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode("utf-8"))
+            reply = self._net.get(req)
+            self._thumb_active += 1
+
+            def _on_finished(reply=reply, key=key):
+                try:
+                    data = reply.readAll()
+                finally:
+                    reply.deleteLater()
+                if not data:
+                    # Clean queue for this key
+                    self._thumb_queue.pop(key, None)
+                else:
+                    pixmap = QPixmap()
+                    if pixmap.loadFromData(bytes(data)):
+                        # Resize to icon size if larger
+                        if pixmap.width() > self.icon_list.iconSize().width() or pixmap.height() > self.icon_list.iconSize().height():
+                            pixmap = pixmap.scaled(self.icon_list.iconSize(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                        self._thumb_cache[key] = pixmap
+                        for li in self._thumb_queue.get(key, []):
+                            li.setIcon(QIcon(pixmap))
+                    self._thumb_queue.pop(key, None)
+                self._thumb_active = max(0, self._thumb_active - 1)
+                # Kick off next batch
+                self._start_next_thumb()
+
+            reply.finished.connect(_on_finished)
