@@ -20,7 +20,7 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
@@ -29,6 +29,8 @@ class BrowserWidget(QWidget):
         self.on_open = on_open
         self.on_rename = on_rename
         self.on_properties = on_properties
+        self.on_new_folder = on_new_folder
+        self.on_new_file = on_new_file
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -221,66 +223,86 @@ class BrowserWidget(QWidget):
 
     def _open_context_menu(self, pos: QPoint):
         item = self._selected_item()
-        if not item:
-            return
         menu = QMenu(self)
-        if item["type"] == "file":
-            name_lower = item["name"].lower()
-            if self._is_video(name_lower):
-                menu.addAction("Play in VLC")
-            else:
-                menu.addAction("Open")
-        menu.addAction("Rename")
-        copy_act = menu.addAction("Download")
-        del_act = menu.addAction("Delete")
-        props_act = menu.addAction("Properties")
+        if item:
+            if item["type"] == "file":
+                name_lower = item["name"].lower()
+                if self._is_video(name_lower):
+                    menu.addAction("Play in VLC")
+                else:
+                    menu.addAction("Open")
+            menu.addAction("Rename")
+            menu.addAction("Download")
+            menu.addAction("Delete")
+            menu.addAction("Properties")
+        else:
+            if self.on_new_folder:
+                menu.addAction("New Folder")
+            if self.on_new_file:
+                menu.addAction("New File")
         act = menu.exec(self.table.mapToGlobal(pos))
         if act:
-            name_lower = item["name"].lower()
-            if act.text() == "Play in VLC" and item["type"] == "file" and self._is_video(name_lower):
-                self.on_play(item["path"])
-            elif act.text() == "Open" and item["type"] == "file" and self.on_open:
-                self.on_open(item["path"])
-            elif act.text() == "Rename" and self.on_rename:
-                self.on_rename(item["path"])
-            elif act.text() == "Download":
-                self.on_copy(item["path"])
-            elif act.text() == "Delete":
-                self.on_delete(item["path"])
-            elif act.text() == "Properties" and self.on_properties:
-                self.on_properties(item)
+            if item:
+                name_lower = item["name"].lower()
+                if act.text() == "Play in VLC" and item["type"] == "file" and self._is_video(name_lower):
+                    self.on_play(item["path"])
+                elif act.text() == "Open" and item["type"] == "file" and self.on_open:
+                    self.on_open(item["path"])
+                elif act.text() == "Rename" and self.on_rename:
+                    self.on_rename(item["path"])
+                elif act.text() == "Download":
+                    self.on_copy(item["path"])
+                elif act.text() == "Delete":
+                    self.on_delete(item["path"])
+                elif act.text() == "Properties" and self.on_properties:
+                    self.on_properties(item)
+            else:
+                if act.text() == "New Folder" and self.on_new_folder:
+                    self.on_new_folder(self.current_path)
+                elif act.text() == "New File" and self.on_new_file:
+                    self.on_new_file(self.current_path)
 
     def _open_context_menu_icons(self, pos: QPoint):
         item_widget = self.icon_list.itemAt(pos)
-        if not item_widget:
-            return
-        data = item_widget.data(Qt.ItemDataRole.UserRole)
+        data = item_widget.data(Qt.ItemDataRole.UserRole) if item_widget else None
         menu = QMenu(self)
-        if data["type"] == "file":
-            name_lower = data["name"].lower()
-            if self._is_video(name_lower):
-                menu.addAction("Play in VLC")
-            else:
-                menu.addAction("Open")
-        menu.addAction("Rename")
-        menu.addAction("Download")
-        menu.addAction("Delete")
-        menu.addAction("Properties")
+        if data:
+            if data["type"] == "file":
+                name_lower = data["name"].lower()
+                if self._is_video(name_lower):
+                    menu.addAction("Play in VLC")
+                else:
+                    menu.addAction("Open")
+            menu.addAction("Rename")
+            menu.addAction("Download")
+            menu.addAction("Delete")
+            menu.addAction("Properties")
+        else:
+            if self.on_new_folder:
+                menu.addAction("New Folder")
+            if self.on_new_file:
+                menu.addAction("New File")
         act = menu.exec(self.icon_list.mapToGlobal(pos))
         if act:
-            name_lower = data["name"].lower()
-            if act.text() == "Play in VLC" and data["type"] == "file" and self._is_video(name_lower):
-                self.on_play(data["path"])
-            elif act.text() == "Open" and data["type"] == "file" and self.on_open:
-                self.on_open(data["path"])
-            elif act.text() == "Rename" and self.on_rename:
-                self.on_rename(data["path"])
-            elif act.text() == "Download":
-                self.on_copy(data["path"])
-            elif act.text() == "Delete":
-                self.on_delete(data["path"])
-            elif act.text() == "Properties" and self.on_properties:
-                self.on_properties(data)
+            if data:
+                name_lower = data["name"].lower()
+                if act.text() == "Play in VLC" and data["type"] == "file" and self._is_video(name_lower):
+                    self.on_play(data["path"])
+                elif act.text() == "Open" and data["type"] == "file" and self.on_open:
+                    self.on_open(data["path"])
+                elif act.text() == "Rename" and self.on_rename:
+                    self.on_rename(data["path"])
+                elif act.text() == "Download":
+                    self.on_copy(data["path"])
+                elif act.text() == "Delete":
+                    self.on_delete(data["path"])
+                elif act.text() == "Properties" and self.on_properties:
+                    self.on_properties(data)
+            else:
+                if act.text() == "New Folder" and self.on_new_folder:
+                    self.on_new_folder(self.current_path)
+                elif act.text() == "New File" and self.on_new_file:
+                    self.on_new_file(self.current_path)
 
     def _on_double_click(self):
         item = self._selected_item()

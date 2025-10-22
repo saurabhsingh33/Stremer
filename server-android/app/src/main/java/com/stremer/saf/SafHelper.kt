@@ -122,4 +122,49 @@ class SafHelper(private val activity: Activity) {
     }
 
     fun getContext(): android.content.Context = activity
+
+    fun createDirectory(parentPath: String, name: String): Boolean {
+        val parent = resolve(parentPath) ?: return false
+        if (!parent.isDirectory) return false
+        // Do not overwrite existing
+        parent.findFile(name)?.let { return false }
+        return try {
+            parent.createDirectory(name) != null
+        } catch (e: Exception) {
+            android.util.Log.e("SafHelper", "Create directory failed: ${e.message}")
+            false
+        }
+    }
+
+    private fun guessMime(name: String): String {
+        val lower = name.lowercase()
+        return when {
+            lower.endsWith(".txt") -> "text/plain"
+            lower.endsWith(".md") -> "text/markdown"
+            lower.endsWith(".json") -> "application/json"
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".gif") -> "image/gif"
+            lower.endsWith(".mp4") -> "video/mp4"
+            lower.endsWith(".mkv") -> "video/x-matroska"
+            else -> "application/octet-stream"
+        }
+    }
+
+    fun createFile(parentPath: String, name: String, mime: String? = null): Boolean {
+        val parent = resolve(parentPath) ?: return false
+        if (!parent.isDirectory) return false
+        // Do not overwrite existing
+        parent.findFile(name)?.let { return false }
+        val chosenMime = mime ?: guessMime(name)
+        return try {
+            val df = parent.createFile(chosenMime, name) ?: return false
+            // Create zero-byte file (stream closed immediately)
+            activity.contentResolver.openOutputStream(df.uri)?.use { /* no-op */ }
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("SafHelper", "Create file failed: ${e.message}")
+            false
+        }
+    }
 }

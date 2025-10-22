@@ -95,6 +95,31 @@ object Server {
                         )
                     }
 
+                    // Create directory
+                    post("/mkdir") {
+                        val json = call.receive<Map<String, String>>()
+                        val parent = json["path"] ?: return@post call.respondText("Missing path", status = HttpStatusCode.BadRequest)
+                        val name = json["name"] ?: return@post call.respondText("Missing name", status = HttpStatusCode.BadRequest)
+                        val ok = ServiceLocator.mkdir(parent.trim('/'), name.trim('/'))
+                        if (ok) call.respond(mapOf("status" to "created")) else call.respondText(
+                            "Create directory failed",
+                            status = HttpStatusCode.InternalServerError
+                        )
+                    }
+
+                    // Create empty file
+                    post("/createFile") {
+                        val json = call.receive<Map<String, String>>()
+                        val parent = json["path"] ?: return@post call.respondText("Missing path", status = HttpStatusCode.BadRequest)
+                        val name = json["name"] ?: return@post call.respondText("Missing name", status = HttpStatusCode.BadRequest)
+                        val mime = json["mime"]
+                        val ok = ServiceLocator.createFile(parent.trim('/'), name.trim('/'), mime)
+                        if (ok) call.respond(mapOf("status" to "created")) else call.respondText(
+                            "Create file failed",
+                            status = HttpStatusCode.InternalServerError
+                        )
+                    }
+
                     // Metadata endpoint
                     get("/meta") {
                         try {

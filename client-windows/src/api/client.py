@@ -48,3 +48,16 @@ class APIClient:
         url = f"{self.base_url}/rename"
         resp = requests.post(url, json={"path": path, "newName": new_name}, headers=self._headers(), timeout=15)
         return resp.status_code == 200
+
+    def create_folder(self, parent_path: str, name: str) -> bool:
+        url = f"{self.base_url}/mkdir"
+        resp = requests.post(url, json={"path": parent_path, "name": name}, headers=self._headers(), timeout=15)
+        return resp.status_code == 200
+
+    def create_file(self, parent_path: str, name: str, mime: Optional[str] = None) -> bool:
+        url = f"{self.base_url}/createFile"
+        payload = {"path": parent_path, "name": name}
+        if mime:
+            payload["mime"] = mime
+        resp = requests.post(url, json=payload, headers=self._headers(), timeout=15)
+        return resp.status_code == 200

@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
         # Ensure initial view mode matches combobox selection (Thumbnails)
@@ -410,6 +410,42 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", "Rename failed")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Rename failed: {e}")
+
+    def _new_folder(self, parent_path: str):
+        if not self.api_client:
+            return
+        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        if not ok:
+            return
+        name = (name or "").strip()
+        if not name:
+            return
+        try:
+            if self.api_client.create_folder(parent_path, name):
+                self._refresh()
+            else:
+                QMessageBox.critical(self, "Error", "Create folder failed")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Create folder failed: {e}")
+
+    def _new_file(self, parent_path: str):
+        if not self.api_client:
+            return
+        name, ok = QInputDialog.getText(self, "New File", "File name (with extension):")
+        if not ok:
+            return
+        name = (name or "").strip()
+        if not name:
+            return
+        # Optional: derive MIME by extension; server also guesses
+        mime = None
+        try:
+            if self.api_client.create_file(parent_path, name, mime):
+                self._refresh()
+            else:
+                QMessageBox.critical(self, "Error", "Create file failed")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Create file failed: {e}")
 
     # --- Session persistence ---
     def _session_file(self) -> Path:
