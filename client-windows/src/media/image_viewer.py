@@ -35,6 +35,12 @@ class ImageViewer(QDialog):
         self._token = auth_token
         # Title: prefer provided display_name, else derive from URL path query
         self.setWindowTitle(self._derive_title(display_name))
+        # Enable maximize (and minimize) buttons on the title bar
+        try:
+            self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+            self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
+        except Exception:
+            pass
         self.resize(1000, 700)
 
         self._net = QNetworkAccessManager(self)
@@ -62,7 +68,10 @@ class ImageViewer(QDialog):
         self._toolbar.addAction(self._act_fit)
 
         self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
+        # Allow the image label to grow beyond the viewport so scrollbars appear and panning works
+        self._scroll.setWidgetResizable(False)
+        # Center image when it's smaller than the viewport
+        self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label = _ImageLabel()
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
@@ -78,6 +87,7 @@ class ImageViewer(QDialog):
 
         self._pixmap: QPixmap | None = None
         self._scale: float = 1.0
+        self._fit_active: bool = True  # when True, auto-fit on resize (e.g., after maximize)
 
         self._fetch()
 
@@ -257,6 +267,7 @@ class ImageViewer(QDialog):
         if abs(new_scale - self._scale) < 1e-3:
             return
         self._scale = new_scale
+        self._fit_active = False  # manual zoom disables auto-fit
         self._update_view()
 
     def _fit_to_window(self):
@@ -269,7 +280,16 @@ class ImageViewer(QDialog):
         sx = avail_w / self._pixmap.width()
         sy = avail_h / self._pixmap.height()
         self._scale = min(sx, sy, 1.0)  # don't upscale on fit
+        self._fit_active = True
         self._update_view()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # If user has chosen Fit mode (or initial state), keep fitting on resize/maximize
+        if getattr(self, "_fit_active", False):
+            # Avoid jitter: only refit if we already have a pixmap
+            if self._pixmap is not None:
+                self._fit_to_window()
 
     # Optional: keyboard shortcuts
     def keyPressEvent(self, e):
