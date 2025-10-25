@@ -308,7 +308,8 @@ class MainWindow(QMainWindow):
             try:
                 url = self.api_client.stream_url(path)
                 token = self.api_client.token or None
-                viewer = ImageViewer(url, token, parent=self)
+                display_name = os.path.basename(path).lstrip('/') or None
+                viewer = ImageViewer(url, token, display_name=display_name, parent=self)
                 viewer.setModal(False)
                 # Ensure Qt deletes on close and we drop our ref
                 viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

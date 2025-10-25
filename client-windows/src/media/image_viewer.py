@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QUrl, QByteArray, QSize
-from PyQt6.QtGui import QAction, QPixmap, QWheelEvent
+from PyQt6.QtGui import QAction, QPixmap, QWheelEvent, QIcon, QPainter, QPen, QColor, QPalette
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from urllib.parse import urlparse, parse_qs, unquote
 
 
 class ImageViewer(QDialog):
@@ -28,21 +29,31 @@ class ImageViewer(QDialog):
     - Toolbar buttons: Zoom In, Zoom Out, Fit
     """
 
-    def __init__(self, url: str, auth_token: str | None = None, parent: QWidget | None = None):
+    def __init__(self, url: str, auth_token: str | None = None, display_name: str | None = None, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Image Viewer")
-        self.resize(1000, 700)
         self._url = url
         self._token = auth_token
+        # Title: prefer provided display_name, else derive from URL path query
+        self.setWindowTitle(self._derive_title(display_name))
+        self.resize(1000, 700)
 
         self._net = QNetworkAccessManager(self)
 
         # UI
         self._toolbar = QToolBar(self)
         self._toolbar.setMovable(False)
-        self._act_zoom_in = QAction("Zoom In", self)
-        self._act_zoom_out = QAction("Zoom Out", self)
-        self._act_fit = QAction("Fit", self)
+        self._toolbar.setIconSize(QSize(20, 20))
+        # Actions with icons
+        self._act_zoom_in = QAction(self)
+        self._act_zoom_out = QAction(self)
+        self._act_fit = QAction(self)
+        # Use custom-drawn icons (magnifier +/- and a frame for fit)
+        self._act_zoom_in.setIcon(self._make_zoom_icon(plus=True))
+        self._act_zoom_out.setIcon(self._make_zoom_icon(plus=False))
+        self._act_fit.setIcon(self._make_fit_icon())
+        self._act_zoom_in.setToolTip("Zoom In")
+        self._act_zoom_out.setToolTip("Zoom Out")
+        self._act_fit.setToolTip("Fit to window (Ctrl+0)")
         self._act_zoom_in.triggered.connect(lambda: self._apply_zoom(1.25))
         self._act_zoom_out.triggered.connect(lambda: self._apply_zoom(0.8))
         self._act_fit.triggered.connect(self._fit_to_window)
@@ -69,6 +80,77 @@ class ImageViewer(QDialog):
         self._scale: float = 1.0
 
         self._fetch()
+
+    def _pen_color(self) -> QColor:
+        try:
+            return self.palette().color(QPalette.ColorRole.WindowText)
+        except Exception:
+            return QColor(60, 60, 60)
+
+    def _make_zoom_icon(self, plus: bool) -> QIcon:
+        size = 24
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(self._pen_color(), 2)
+        p.setPen(pen)
+        # Lens
+        cx, cy, r = 10, 10, 7
+        p.drawEllipse(cx - r, cy - r, 2 * r, 2 * r)
+        # Handle
+        p.drawLine(cx + 4, cy + 4, cx + 10, cy + 10)
+        # Plus / minus
+        p.drawLine(cx - 3, cy, cx + 3, cy)
+        if plus:
+            p.drawLine(cx, cy - 3, cx, cy + 3)
+        p.end()
+        return QIcon(pm)
+
+    def _make_fit_icon(self) -> QIcon:
+        size = 24
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(self._pen_color(), 2)
+        p.setPen(pen)
+        # Outer frame
+        rect_x, rect_y, rect_w, rect_h = 5, 6, 14, 12
+        p.drawRect(rect_x, rect_y, rect_w, rect_h)
+        # Corner marks (short L-shapes inside frame)
+        m = 3
+        # Top-left
+        p.drawLine(rect_x + 1, rect_y + m, rect_x + 1, rect_y + 1)
+        p.drawLine(rect_x + 1, rect_y + 1, rect_x + m, rect_y + 1)
+        # Top-right
+        p.drawLine(rect_x + rect_w - 1, rect_y + m, rect_x + rect_w - 1, rect_y + 1)
+        p.drawLine(rect_x + rect_w - m, rect_y + 1, rect_x + rect_w - 1, rect_y + 1)
+        # Bottom-left
+        p.drawLine(rect_x + 1, rect_y + rect_h - m, rect_x + 1, rect_y + rect_h - 1)
+        p.drawLine(rect_x + 1, rect_y + rect_h - 1, rect_x + m, rect_y + rect_h - 1)
+        # Bottom-right
+        p.drawLine(rect_x + rect_w - 1, rect_y + rect_h - m, rect_x + rect_w - 1, rect_y + rect_h - 1)
+        p.drawLine(rect_x + rect_w - m, rect_y + rect_h - 1, rect_x + rect_w - 1, rect_y + rect_h - 1)
+        p.end()
+        return QIcon(pm)
+
+    def _derive_title(self, display_name: str | None) -> str:
+        if display_name:
+            return display_name
+        # Try to extract `path` query param and take basename
+        try:
+            parsed = urlparse(self._url)
+            q = parse_qs(parsed.query)
+            p = q.get("path", [""])[0]
+            if p:
+                p = unquote(p)
+                base = p.rstrip("/").split("/")[-1]
+                if base:
+                    return base
+        except Exception:
+            pass
+        return "Image Viewer"
 
     def _fetch(self):
         req = QNetworkRequest(QUrl(self._url))
