@@ -30,3 +30,5 @@ On first run, click Login and enter:
 - Password: password
 
 To play videos, ensure VLC is installed. The client will attempt to launch VLC with the stream URL.
+
+Images are opened inline in a built‑in viewer without saving to disk. Use the context menu "Open" on an image file to load it over HTTP, then zoom with the toolbar or Ctrl+0 to fit.

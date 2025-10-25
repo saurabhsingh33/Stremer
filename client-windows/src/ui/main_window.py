@@ -6,6 +6,7 @@ from api.client import APIClient
 from ui.login_dialog import LoginDialog
 from file_browser.browser_widget import BrowserWidget
 from media.vlc_player import play_url
+from media.image_viewer import ImageViewer
 from ui.details_panel import DetailsPanel
 import os
 import tempfile
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self.api_client: APIClient | None = None
+        self._open_image_views: list[ImageViewer] = []
 
         # Toolbar
         toolbar = QToolBar("Main Toolbar")
@@ -300,6 +302,29 @@ class MainWindow(QMainWindow):
     def _open_default(self, path: str):
         if not self.api_client:
             return
+        # If image file, open in in-app viewer without saving to disk
+        name_lower = os.path.basename(path).lower()
+        if self._is_image(name_lower):
+            try:
+                url = self.api_client.stream_url(path)
+                token = self.api_client.token or None
+                viewer = ImageViewer(url, token, parent=self)
+                viewer.setModal(False)
+                # Ensure Qt deletes on close and we drop our ref
+                viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                self._open_image_views.append(viewer)
+                def _cleanup():
+                    try:
+                        self._open_image_views.remove(viewer)
+                    except ValueError:
+                        pass
+                viewer.destroyed.connect(lambda *_: _cleanup())
+                viewer.show()
+                self.statusBar().showMessage("Opening image…", 2000)
+                return
+            except Exception as e:
+                QMessageBox.critical(self, "Open failed", f"Could not open image: {e}")
+                return
         # Build temp destination with original extension
         base_name = os.path.basename(path).lstrip('/')
         if not base_name:
@@ -336,6 +361,11 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(url)
         self.statusBar().showMessage(f"Streaming in VLC...", 3000)
         play_url(url)
+
+    def _is_image(self, name_lower: str) -> bool:
+        return name_lower.endswith((
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"
+        ))
 
     def _delete(self, path: str):
         if not self.api_client:
