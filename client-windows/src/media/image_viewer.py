@@ -33,6 +33,9 @@ class ImageViewer(QDialog):
     - Toolbar buttons: Zoom In, Zoom Out, Fit
     """
 
+    # Signal emitted when a file is saved, with the server path
+    file_saved = pyqtSignal(str)
+
     def __init__(self, url: str, auth_token: str | None = None, display_name: str | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self._url = url
@@ -596,6 +599,8 @@ class ImageViewer(QDialog):
                             on_done()
                         except Exception:
                             pass
+                    # Emit signal to notify that file was saved
+                    self.file_saved.emit(dest_path)
                     QMessageBox.information(self, "Saved", "Image saved successfully.")
                     return
                 # Fall back to Qt error string or HTTP status

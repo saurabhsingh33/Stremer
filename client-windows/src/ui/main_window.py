@@ -163,6 +163,12 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "Not connected", "Login first.")
 
+    def _on_image_saved(self, saved_path: str):
+        """Called when an image is saved from the image viewer."""
+        # Refresh the browser to update thumbnails
+        self._refresh()
+        self.statusBar().showMessage(f"Thumbnail updated for {os.path.basename(saved_path)}", 3000)
+
     def _on_view_change(self, text: str):
         self.browser.set_view_mode(text.lower())
 
@@ -320,6 +326,8 @@ class MainWindow(QMainWindow):
                     except ValueError:
                         pass
                 viewer.destroyed.connect(lambda *_: _cleanup())
+                # Connect file_saved signal to refresh browser
+                viewer.file_saved.connect(self._on_image_saved)
                 viewer.show()
                 self.statusBar().showMessage("Opening image…", 2000)
                 return
