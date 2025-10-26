@@ -51,4 +51,5 @@ object ServiceLocator {
     fun rename(path: String, newName: String) = saf?.renameFile(path, newName) ?: false
     fun mkdir(parentPath: String, name: String) = saf?.createDirectory(parentPath, name) ?: false
     fun createFile(parentPath: String, name: String, mime: String? = null) = saf?.createFile(parentPath, name, mime) ?: false
+    fun writeBytes(path: String, data: ByteArray, mime: String? = null) = saf?.writeBytes(path, data, mime) ?: false
 }

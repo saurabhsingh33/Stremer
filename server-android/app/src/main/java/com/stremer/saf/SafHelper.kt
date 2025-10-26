@@ -167,4 +167,33 @@ class SafHelper(private val activity: Activity) {
             false
         }
     }
+
+    fun writeBytes(path: String, data: ByteArray, mime: String? = null): Boolean {
+        // path includes filename
+        val cleaned = path.trim('/')
+        val parentPath = cleaned.substringBeforeLast('/', "")
+        val name = cleaned.substringAfterLast('/')
+        if (name.isEmpty()) return false
+        val parent = resolve(parentPath) ?: return false
+        if (!parent.isDirectory) return false
+        try {
+            // Find or create target file
+            var target = parent.findFile(name)
+            if (target == null) {
+                val chosenMime = mime ?: guessMime(name)
+                target = parent.createFile(chosenMime, name)
+                if (target == null) return false
+            }
+            // Write bytes (truncate existing)
+            val mode = "wt" // write-truncate
+            activity.contentResolver.openOutputStream(target.uri, mode)?.use { os ->
+                os.write(data)
+                os.flush()
+            } ?: return false
+            return true
+        } catch (e: Exception) {
+            android.util.Log.e("SafHelper", "writeBytes failed: ${e.message}")
+            return false
+        }
+    }
 }

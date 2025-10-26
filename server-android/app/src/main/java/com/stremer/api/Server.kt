@@ -12,6 +12,8 @@ import io.ktor.server.request.*
 import io.ktor.server.routing.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.utils.io.*
+import io.ktor.utils.io.core.*
 
 object Server {
     private var engine: ApplicationEngine? = null
@@ -49,6 +51,29 @@ object Server {
                 }
 
                 authenticate("auth-bearer") {
+                    // Upload/overwrite file bytes
+                    put("/file") {
+                        try {
+                            val path = call.request.queryParameters["path"]
+                                ?: return@put call.respondText("Missing path", status = HttpStatusCode.BadRequest)
+
+                            // Read raw body bytes
+                            val channel = call.receiveChannel()
+                            val packet = channel.readRemaining(Long.MAX_VALUE)
+                            val bytes = packet.readBytes()
+
+                            val contentTypeHeader = call.request.headers[io.ktor.http.HttpHeaders.ContentType]
+                            val ok = com.stremer.di.ServiceLocator.writeBytes(path.trim('/'), bytes, contentTypeHeader)
+                            if (ok) {
+                                call.respond(mapOf("status" to "saved"))
+                            } else {
+                                call.respondText("Write failed", status = HttpStatusCode.InternalServerError)
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("Server", "Write /file error: ${e.message}")
+                            call.respondText("Error writing file", status = HttpStatusCode.InternalServerError)
+                        }
+                    }
                     get("/files") {
                         try {
                             val path = call.request.queryParameters["path"] ?: "/"
