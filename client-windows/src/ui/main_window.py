@@ -239,7 +239,7 @@ class MainWindow(QMainWindow):
 
         def run(self):
             try:
-                with requests.get(self.url, headers=self.headers, stream=True, timeout=60) as r:
+                with requests.get(self.url, headers=self.headers, stream=True, timeout=120) as r:
                     r.raise_for_status()
                     total = int(r.headers.get('Content-Length') or 0)
                     downloaded = 0
@@ -340,10 +340,8 @@ class MainWindow(QMainWindow):
             base_name = "file"
         dest = os.path.join(tempfile.gettempdir(), f"stremer_{uuid.uuid4().hex}_{base_name}")
         url = self.api_client.stream_url(path)
+        # Don't add Authorization header since token is already in URL
         headers = {}
-        # Prefer Authorization header if token exists, although token is already in URL
-        if self.api_client.token:
-            headers["Authorization"] = f"Bearer {self.api_client.token}"
 
         self.statusBar().showMessage(f"Downloading {base_name}…")
         self._dl = self._DownloadThread(url, dest, headers)
@@ -355,7 +353,10 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Open failed", f"Could not open file: {e}")
         def _err(msg: str):
-            QMessageBox.critical(self, "Download failed", msg)
+            # Show more detailed error message
+            print(f"Download error for {base_name}: {msg}")
+            print(f"URL: {url}")
+            QMessageBox.critical(self, "Download failed", f"Failed to download {base_name}:\n{msg}\n\nURL: {url}")
             self.statusBar().clearMessage()
         self._dl.done.connect(_done)
         self._dl.error.connect(_err)
@@ -384,9 +385,8 @@ class MainWindow(QMainWindow):
             base_name = "file"
         dest = os.path.join(tempfile.gettempdir(), f"stremer_{uuid.uuid4().hex}_{base_name}")
         url = self.api_client.stream_url(path)
+        # Don't add Authorization header since token is already in URL
         headers = {}
-        if self.api_client.token:
-            headers["Authorization"] = f"Bearer {self.api_client.token}"
 
         self.statusBar().showMessage(f"Downloading {base_name}…")
         self._dl = self._DownloadThread(url, dest, headers)
@@ -401,7 +401,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Open failed", f"Could not open file with {app_path}: {e}")
 
         def _err(msg: str):
-            QMessageBox.critical(self, "Download failed", msg)
+            print(f"Download error for {base_name}: {msg}")
+            print(f"URL: {url}")
+            QMessageBox.critical(self, "Download failed", f"Failed to download {base_name}:\n{msg}\n\nURL: {url}")
             self.statusBar().clearMessage()
 
         self._dl.done.connect(_done)

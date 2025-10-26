@@ -70,10 +70,40 @@ class SafHelper(private val activity: Activity) {
     fun getFileInfo(path: String): com.stremer.files.FileItem? {
         val file = getFile(path) ?: return null
         return try {
+            val fileSize = if (file.isFile) {
+                // DocumentFile.length() can return 0 for some files, query using cursor
+                try {
+                    val cursor = activity.contentResolver.query(
+                        file.uri,
+                        arrayOf(android.provider.DocumentsContract.Document.COLUMN_SIZE),
+                        null,
+                        null,
+                        null
+                    )
+                    cursor?.use {
+                        if (it.moveToFirst()) {
+                            val sizeIndex = it.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_SIZE)
+                            if (sizeIndex >= 0) {
+                                it.getLong(sizeIndex)
+                            } else {
+                                file.length()
+                            }
+                        } else {
+                            file.length()
+                        }
+                    } ?: file.length()
+                } catch (e: Exception) {
+                    android.util.Log.w("SafHelper", "Failed to query size via cursor, using length(): ${e.message}")
+                    file.length()
+                }
+            } else {
+                null
+            }
+
             com.stremer.files.FileItem(
                 name = file.name ?: "unknown",
                 type = if (file.isDirectory) "dir" else "file",
-                size = if (file.isFile) file.length() else null
+                size = fileSize
             )
         } catch (e: Exception) {
             android.util.Log.e("SafHelper", "Error getting file info: ${e.message}")
