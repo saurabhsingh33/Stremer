@@ -52,4 +52,5 @@ object ServiceLocator {
     fun mkdir(parentPath: String, name: String) = saf?.createDirectory(parentPath, name) ?: false
     fun createFile(parentPath: String, name: String, mime: String? = null) = saf?.createFile(parentPath, name, mime) ?: false
     fun writeBytes(path: String, data: ByteArray, mime: String? = null) = saf?.writeBytes(path, data, mime) ?: false
+    suspend fun writeStream(path: String, channel: io.ktor.utils.io.ByteReadChannel, mime: String? = null) = saf?.writeStream(path, channel, mime) ?: false
 }

@@ -226,4 +226,82 @@ class SafHelper(private val activity: Activity) {
             return false
         }
     }
+
+    suspend fun writeStream(path: String, channel: io.ktor.utils.io.ByteReadChannel, mime: String? = null): Boolean {
+        // path includes filename - stream version for large files
+        val cleaned = path.trim('/')
+        val parentPath = cleaned.substringBeforeLast('/', "")
+        val name = cleaned.substringAfterLast('/')
+        if (name.isEmpty()) {
+            android.util.Log.e("SafHelper", "Empty filename in path: $path")
+            return false
+        }
+
+        // Ensure parent directories exist
+        val parent = resolve(parentPath)
+        if (parent == null) {
+            android.util.Log.e("SafHelper", "Failed to resolve parent path: $parentPath")
+            return false
+        }
+        if (!parent.isDirectory) {
+            android.util.Log.e("SafHelper", "Parent is not a directory: $parentPath")
+            return false
+        }
+
+        try {
+            // Find or create target file
+            var target = parent.findFile(name)
+            if (target == null) {
+                val chosenMime = mime ?: guessMime(name)
+                android.util.Log.d("SafHelper", "Creating new file: $name with MIME: $chosenMime")
+                target = parent.createFile(chosenMime, name)
+                if (target == null) {
+                    android.util.Log.e("SafHelper", "Failed to create file: $name in parent: ${parent.uri}")
+                    return false
+                }
+                android.util.Log.i("SafHelper", "Created file: $name at ${target.uri}")
+            } else {
+                android.util.Log.i("SafHelper", "File already exists, will overwrite: $name")
+            }
+
+            // Write data in chunks (truncate existing)
+            val mode = "wt" // write-truncate
+            android.util.Log.d("SafHelper", "Opening output stream for: ${target.uri}")
+            activity.contentResolver.openOutputStream(target.uri, mode)?.use { os ->
+                val buffer = ByteArray(65536) // 64KB buffer for better performance
+                var totalWritten = 0L
+                var lastLogTime = System.currentTimeMillis()
+
+                while (!channel.isClosedForRead) {
+                    val bytesRead = channel.readAvailable(buffer, 0, buffer.size)
+                    if (bytesRead == -1) break
+
+                    os.write(buffer, 0, bytesRead)
+                    totalWritten += bytesRead.toLong()
+
+                    // Log progress for large files (every 10MB or every 5 seconds)
+                    val currentTime = System.currentTimeMillis()
+                    if (totalWritten % (10L * 1024L * 1024L) == 0L || (currentTime - lastLogTime) > 5000) {
+                        android.util.Log.d("SafHelper", "Written ${totalWritten / 1024 / 1024} MB to $name")
+                        lastLogTime = currentTime
+                    }
+                }
+
+                os.flush()
+                android.util.Log.i("SafHelper", "Successfully wrote $totalWritten bytes to $name")
+            } ?: run {
+                android.util.Log.e("SafHelper", "Failed to open output stream for: ${target.uri}")
+                return false
+            }
+
+            return true
+        } catch (e: NumberFormatException) {
+            android.util.Log.e("SafHelper", "Number format error writing $name: ${e.message}", e)
+            return false
+        } catch (e: Exception) {
+            android.util.Log.e("SafHelper", "writeStream failed for $name: ${e.message}", e)
+            e.printStackTrace()
+            return false
+        }
+    }
 }

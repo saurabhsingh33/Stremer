@@ -23,6 +23,7 @@ object Server {
             install(ContentNegotiation) {
                 json()
             }
+
             install(Authentication) {
                 bearer("auth-bearer") {
                     authenticate { tokenCredential ->
@@ -51,27 +52,39 @@ object Server {
                 }
 
                 authenticate("auth-bearer") {
-                    // Upload/overwrite file bytes
+                    // Upload/overwrite file bytes with streaming support
                     put("/file") {
                         try {
                             val path = call.request.queryParameters["path"]
                                 ?: return@put call.respondText("Missing path", status = HttpStatusCode.BadRequest)
 
-                            // Read raw body bytes
+                            // Read body in chunks for large file support
                             val channel = call.receiveChannel()
-                            val packet = channel.readRemaining(Long.MAX_VALUE)
-                            val bytes = packet.readBytes()
-
                             val contentTypeHeader = call.request.headers[io.ktor.http.HttpHeaders.ContentType]
-                            val ok = com.stremer.di.ServiceLocator.writeBytes(path.trim('/'), bytes, contentTypeHeader)
+                            val contentLength = call.request.headers[io.ktor.http.HttpHeaders.ContentLength]
+
+                            android.util.Log.i("Server", "Starting upload for path: $path, Content-Length: $contentLength")
+
+                            val ok = com.stremer.di.ServiceLocator.writeStream(
+                                path.trim('/'),
+                                channel,
+                                contentTypeHeader
+                            )
+
                             if (ok) {
+                                android.util.Log.i("Server", "Upload completed successfully for: $path")
                                 call.respond(mapOf("status" to "saved"))
                             } else {
+                                android.util.Log.e("Server", "Upload failed for: $path")
                                 call.respondText("Write failed", status = HttpStatusCode.InternalServerError)
                             }
+                        } catch (e: NumberFormatException) {
+                            android.util.Log.e("Server", "Number format error in upload: ${e.message}", e)
+                            call.respondText("Error writing file: Number format error - ${e.message}", status = HttpStatusCode.InternalServerError)
                         } catch (e: Exception) {
-                            android.util.Log.e("Server", "Write /file error: ${e.message}")
-                            call.respondText("Error writing file", status = HttpStatusCode.InternalServerError)
+                            android.util.Log.e("Server", "Write /file error: ${e.message}", e)
+                            e.printStackTrace()
+                            call.respondText("Error writing file: ${e.message}", status = HttpStatusCode.InternalServerError)
                         }
                     }
                     get("/files") {

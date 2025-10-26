@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter, QInputDialog
-from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter, QInputDialog, QProgressDialog
+from PyQt6.QtGui import QAction, QDragEnterEvent, QDropEvent
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from api.client import APIClient
@@ -25,6 +25,9 @@ class MainWindow(QMainWindow):
 
         self.api_client: APIClient | None = None
         self._open_image_views: list[ImageViewer] = []
+
+        # Enable drag and drop
+        self.setAcceptDrops(True)
 
         # Toolbar
         toolbar = QToolBar("Main Toolbar")
@@ -68,7 +71,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with, on_upload=self._upload)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
         # Ensure initial view mode matches combobox selection (Thumbnails)
@@ -304,6 +307,113 @@ class MainWindow(QMainWindow):
                 self.done.emit(self.dest_dir)
             except Exception as e:
                 self.error.emit(str(e))
+
+    class _UploadThread(QThread):
+        progress = pyqtSignal(int, str)  # percentage, message
+        done = pyqtSignal(int, int)  # uploaded_count, total_bytes
+        error = pyqtSignal(str)
+
+        def __init__(self, api_client: APIClient, files_to_upload: list, target_path: str):
+            super().__init__()
+            self.api_client = api_client
+            self.files_to_upload = files_to_upload  # list of (local_path, remote_name, size)
+            self.target_path = target_path
+            self.canceled = False
+
+        def cancel(self):
+            self.canceled = True
+
+        def run(self):
+            import time
+            uploaded_count = 0
+            uploaded_bytes = 0
+            total_size = sum(size for _, _, size in self.files_to_upload)
+
+            for file_idx, (local_file, remote_name, file_size) in enumerate(self.files_to_upload):
+                if self.canceled:
+                    break
+
+                try:
+                    remote_path = f"{self.target_path.rstrip('/')}/{remote_name}"
+                    url = f"{self.api_client.base_url}/file?path={remote_path}"
+                    headers = {'Authorization': f'Bearer {self.api_client.token}'}
+
+                    # Track progress with throttling
+                    last_update_time = time.time()
+
+                    # Capture the progress signal from the thread
+                    progress_signal = self.progress
+
+                    # Helper function for formatting bytes
+                    def format_bytes(bytes_count):
+                        """Format bytes into human-readable format."""
+                        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                            if bytes_count < 1024.0:
+                                return f"{bytes_count:.1f} {unit}"
+                            bytes_count /= 1024.0
+                        return f"{bytes_count:.1f} PB"
+
+                    def create_progress_reader(file_path, file_size):
+                        """Create a file reader that tracks upload progress."""
+                        class ProgressFileReader:
+                            def __init__(self):
+                                self.file = open(file_path, 'rb')
+                                self.bytes_read = 0
+
+                            def read(self, size=-1):
+                                nonlocal last_update_time
+                                chunk = self.file.read(size)
+                                self.bytes_read += len(chunk)
+
+                                # Throttle updates to every 200ms
+                                current_time = time.time()
+                                if current_time - last_update_time >= 0.2 or self.bytes_read == file_size:
+                                    last_update_time = current_time
+                                    current_file_progress = int((self.bytes_read / file_size) * 100) if file_size > 0 else 0
+                                    overall_bytes = uploaded_bytes + self.bytes_read
+                                    overall_progress = int((overall_bytes / total_size) * 100) if total_size > 0 else 0
+
+                                    msg = (f"Uploading {remote_name}\n"
+                                          f"{format_bytes(self.bytes_read)} / {format_bytes(file_size)} ({current_file_progress}%)\n"
+                                          f"Overall: {format_bytes(overall_bytes)} / {format_bytes(total_size)}")
+                                    progress_signal.emit(overall_progress, msg)
+
+                                return chunk
+
+                            def __len__(self):
+                                return file_size
+
+                            def __enter__(self):
+                                return self
+
+                            def __exit__(self, *args):
+                                self.file.close()
+
+                        return ProgressFileReader()
+
+                    with create_progress_reader(local_file, file_size) as reader:
+                        response = requests.put(
+                            url,
+                            data=reader,
+                            headers=headers,
+                            timeout=600  # 10 minutes for very large files
+                        )
+
+                        if response.status_code == 200:
+                            uploaded_count += 1
+                            uploaded_bytes += file_size
+                        else:
+                            error_msg = f"Failed to upload {remote_name}: {response.status_code}"
+                            try:
+                                error_msg += f"\n{response.text}"
+                            except:
+                                pass
+                            self.error.emit(error_msg)
+
+                except Exception as e:
+                    self.error.emit(f"Error uploading {remote_name}: {str(e)}")
+
+            self.done.emit(uploaded_count, uploaded_bytes)
 
     def _open_default(self, path: str):
         if not self.api_client:
@@ -597,3 +707,98 @@ class MainWindow(QMainWindow):
             self.browser.set_api_client(None)
             self._clear_saved_session()
             self.statusBar().showMessage("Not connected")
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Accept drag events with file URLs."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent):
+        """Handle dropped files/folders."""
+        if not self.api_client:
+            QMessageBox.warning(self, "Not connected", "Please login to upload files.")
+            return
+
+        urls = event.mimeData().urls()
+        local_paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+
+        if local_paths:
+            self._upload(local_paths, self.browser.current_path)
+
+    def _upload(self, local_paths: list[str], target_path: str):
+        """Upload files/folders to the server."""
+        if not self.api_client:
+            QMessageBox.warning(self, "Not connected", "Please login to upload files.")
+            return
+
+        # Collect all files to upload (expand folders)
+        files_to_upload = []
+        total_size = 0
+        for local_path in local_paths:
+            if os.path.isfile(local_path):
+                size = os.path.getsize(local_path)
+                files_to_upload.append((local_path, os.path.basename(local_path), size))
+                total_size += size
+            elif os.path.isdir(local_path):
+                # Recursively collect all files in the folder
+                folder_name = os.path.basename(local_path)
+                for root, dirs, files in os.walk(local_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        # Calculate relative path within the folder
+                        rel_path = os.path.relpath(file_path, local_path)
+                        remote_path = os.path.join(folder_name, rel_path).replace('\\', '/')
+                        size = os.path.getsize(file_path)
+                        files_to_upload.append((file_path, remote_path, size))
+                        total_size += size
+
+        if not files_to_upload:
+            QMessageBox.information(self, "No files", "No files selected for upload.")
+            return
+
+        # Create progress dialog
+        progress = QProgressDialog("Preparing upload...", "Cancel", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        # Create and start upload thread
+        upload_thread = self._UploadThread(self.api_client, files_to_upload, target_path)
+
+        def on_progress(percentage, message):
+            if progress.wasCanceled():
+                upload_thread.cancel()
+                return
+            progress.setValue(percentage)
+            progress.setLabelText(message)
+
+        def on_done(uploaded_count, uploaded_bytes):
+            progress.setValue(100)
+            if uploaded_count > 0:
+                self.statusBar().showMessage(
+                    f"Uploaded {uploaded_count} file(s) ({self._format_bytes(uploaded_bytes)})"
+                )
+                # Refresh browser to show new files
+                self._refresh()
+            else:
+                self.statusBar().showMessage("Upload canceled or failed")
+
+        def on_error(error_msg):
+            QMessageBox.warning(self, "Upload Error", error_msg)
+
+        upload_thread.progress.connect(on_progress)
+        upload_thread.done.connect(on_done)
+        upload_thread.error.connect(on_error)
+
+        # Connect cancel button to thread cancellation
+        progress.canceled.connect(upload_thread.cancel)
+
+        upload_thread.start()
+
+    def _format_bytes(self, bytes_count):
+        """Format bytes into human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_count < 1024.0:
+                return f"{bytes_count:.1f} {unit}"
+            bytes_count /= 1024.0
+        return f"{bytes_count:.1f} PB"

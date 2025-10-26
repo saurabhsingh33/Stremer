@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QTableWidget,
     QTableWidgetItem,
     QAbstractItemView,
@@ -8,6 +9,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QListView,
+    QToolButton,
+    QTreeView,
 )
 from PyQt6.QtCore import Qt, QPoint, QSize, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QStyle
@@ -20,7 +23,7 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None, on_upload=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
@@ -32,8 +35,7 @@ class BrowserWidget(QWidget):
         self.on_new_folder = on_new_folder
         self.on_new_file = on_new_file
         self.on_open_with = on_open_with
-        self.on_new_folder = on_new_folder
-        self.on_new_file = on_new_file
+        self.on_upload = on_upload
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -45,6 +47,18 @@ class BrowserWidget(QWidget):
         self._forward_stack: list[str] = []
 
         layout = QVBoxLayout(self)
+
+        # Toolbar with upload button
+        toolbar_layout = QHBoxLayout()
+
+        self.upload_btn = QToolButton()
+        self.upload_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.upload_btn.setToolTip("Upload files/folders")
+        self.upload_btn.clicked.connect(self._on_upload_clicked)
+        toolbar_layout.addWidget(self.upload_btn)
+
+        toolbar_layout.addStretch()
+        layout.addLayout(toolbar_layout)
         # List (table) view
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Name", "Type", "Size"])
@@ -555,3 +569,27 @@ class BrowserWidget(QWidget):
                 common.append(('Windows Media Player', wmp_path))
 
         return common
+
+    def _on_upload_clicked(self):
+        """Handle upload button click - open file/folder selection dialog."""
+        if self.on_upload:
+            from PyQt6.QtWidgets import QFileDialog
+
+            # Ask user what to upload
+            dialog = QFileDialog(self)
+            dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+            dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+
+            # Enable selecting both files and folders
+            file_view = dialog.findChild(QListView, "listView")
+            if file_view:
+                file_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+            tree_view = dialog.findChild(QTreeView)
+            if tree_view:
+                tree_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+            if dialog.exec():
+                selected = dialog.selectedFiles()
+                if selected:
+                    self.on_upload(selected, self.current_path)
