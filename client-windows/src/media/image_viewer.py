@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QSpinBox,
     QInputDialog,
+    QMenu,
+    QToolButton,
 )
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from urllib.parse import urlparse, parse_qs, unquote
@@ -128,27 +130,84 @@ class ImageViewer(QDialog):
         self._scale: float = 1.0
         self._fit_active: bool = True  # when True, auto-fit on resize (e.g., after maximize)
 
-        # Saving actions (disabled until image loaded and server path known)
+        # Saving button with dropdown menu (positioned at the right end of toolbar)
         self._toolbar.addSeparator()
-        self._act_save = QAction(self)
-        try:
-            self._act_save.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_DialogSaveButton))
-        except Exception:
-            self._act_save.setText("Save")
-        self._act_save.setToolTip("Save (overwrite current file)")
-        self._act_save.setEnabled(False)
-        self._act_save.triggered.connect(self._save)
-        self._toolbar.addAction(self._act_save)
+        # Add spacer to push save button to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._toolbar.addWidget(spacer)
 
-        self._act_save_copy = QAction(self)
-        try:
-            self._act_save_copy.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_DialogSaveButton))
-        except Exception:
-            self._act_save_copy.setText("Save as Copy")
+        # Create modern 3D save button with dropdown
+        self._save_button = QToolButton(self)
+        self._save_button.setText("Save")
+        self._save_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._save_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._save_button.setEnabled(False)
+
+        # Apply modern 3D styling
+        self._save_button.setStyleSheet("""
+            QToolButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #f0f0f0, stop:0.5 #e0e0e0, stop:1 #d0d0d0);
+                border: 1px solid #a0a0a0;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                color: #2c3e50;
+                min-width: 80px;
+                max-height: 28px;
+                text-align: center;
+            }
+            QToolButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #e8f4f8, stop:0.5 #d0e8f0, stop:1 #b8dce8);
+                border: 1px solid #0078d4;
+            }
+            QToolButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #c0c0c0, stop:0.5 #d0d0d0, stop:1 #e0e0e0);
+                border: 1px solid #606060;
+                padding-top: 5px;
+                padding-left: 13px;
+            }
+            QToolButton:disabled {
+                background: #f5f5f5;
+                border: 1px solid #cccccc;
+                color: #a0a0a0;
+            }
+            QToolButton::menu-button {
+                border-left: 1px solid #a0a0a0;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+                width: 16px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #f0f0f0, stop:0.5 #e0e0e0, stop:1 #d0d0d0);
+            }
+            QToolButton::menu-button:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #e8f4f8, stop:0.5 #d0e8f0, stop:1 #b8dce8);
+            }
+        """)
+
+        # Create actions for save menu
+        self._act_save = QAction("Save", self)
+        self._act_save.setToolTip("Save (overwrite current file)")
+        self._act_save.triggered.connect(self._save)
+
+        self._act_save_copy = QAction("Save as Copy", self)
         self._act_save_copy.setToolTip("Save as Copy (create new file)")
-        self._act_save_copy.setEnabled(False)
         self._act_save_copy.triggered.connect(self._save_as_copy)
-        self._toolbar.addAction(self._act_save_copy)
+
+        # Create dropdown menu
+        save_menu = QMenu(self)
+        save_menu.addAction(self._act_save)
+        save_menu.addAction(self._act_save_copy)
+
+        # Set default action (clicking the button itself triggers Save)
+        self._save_button.setDefaultAction(self._act_save)
+        self._save_button.setMenu(save_menu)
+
+        self._toolbar.addWidget(self._save_button)
 
         self._fetch()
 
@@ -292,8 +351,7 @@ class ImageViewer(QDialog):
                     self._status.setText(self._nice_info() + size_text)
                     # Enable saving if we know where this image came from
                     can_save = bool(self._server_path)
-                    self._act_save.setEnabled(can_save)
-                    self._act_save_copy.setEnabled(can_save)
+                    self._save_button.setEnabled(can_save)
                     # Enable crop mode now that an image is present
                     self._act_crop_mode.setEnabled(True)
                     return
