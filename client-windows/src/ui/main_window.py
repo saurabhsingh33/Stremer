@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
         # Ensure initial view mode matches combobox selection (Thumbnails)
@@ -357,6 +357,53 @@ class MainWindow(QMainWindow):
         def _err(msg: str):
             QMessageBox.critical(self, "Download failed", msg)
             self.statusBar().clearMessage()
+        self._dl.done.connect(_done)
+        self._dl.error.connect(_err)
+        self._dl.start()
+
+    def _open_with(self, path: str, app_path: str | None):
+        """Open file with specified application or show file chooser."""
+        if not self.api_client:
+            return
+
+        # If app_path is None, show file chooser dialog
+        if app_path is None:
+            from PyQt6.QtWidgets import QFileDialog
+            app_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Choose Application",
+                "",
+                "Applications (*.exe);;All Files (*.*)"
+            )
+            if not app_path:
+                return
+
+        # Download the file to temp and open with specified app
+        base_name = os.path.basename(path).lstrip('/')
+        if not base_name:
+            base_name = "file"
+        dest = os.path.join(tempfile.gettempdir(), f"stremer_{uuid.uuid4().hex}_{base_name}")
+        url = self.api_client.stream_url(path)
+        headers = {}
+        if self.api_client.token:
+            headers["Authorization"] = f"Bearer {self.api_client.token}"
+
+        self.statusBar().showMessage(f"Downloading {base_name}…")
+        self._dl = self._DownloadThread(url, dest, headers)
+        self._dl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading {base_name}… {p}%"))
+
+        def _done(local_path: str):
+            self.statusBar().showMessage(f"Opening {base_name} with {os.path.basename(app_path)}", 3000)
+            try:
+                import subprocess
+                subprocess.Popen([app_path, local_path])
+            except Exception as e:
+                QMessageBox.critical(self, "Open failed", f"Could not open file with {app_path}: {e}")
+
+        def _err(msg: str):
+            QMessageBox.critical(self, "Download failed", msg)
+            self.statusBar().clearMessage()
+
         self._dl.done.connect(_done)
         self._dl.error.connect(_err)
         self._dl.start()

@@ -20,7 +20,7 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
@@ -29,6 +29,9 @@ class BrowserWidget(QWidget):
         self.on_open = on_open
         self.on_rename = on_rename
         self.on_properties = on_properties
+        self.on_new_folder = on_new_folder
+        self.on_new_file = on_new_file
+        self.on_open_with = on_open_with
         self.on_new_folder = on_new_folder
         self.on_new_file = on_new_file
         self.current_path = "/"
@@ -231,6 +234,19 @@ class BrowserWidget(QWidget):
                     menu.addAction("Play in VLC")
                 else:
                     menu.addAction("Open")
+
+                # Add "Open With" submenu
+                if self.on_open_with:
+                    open_with_menu = menu.addMenu("Open With")
+                    apps = self._get_associated_apps(item["name"])
+                    if apps:
+                        for app_name, app_path in apps:
+                            action = open_with_menu.addAction(app_name)
+                            action.setData({"path": item["path"], "app": app_path})
+                    open_with_menu.addSeparator()
+                    choose_action = open_with_menu.addAction("Choose another app...")
+                    choose_action.setData({"path": item["path"], "app": None})
+
             menu.addAction("Rename")
             menu.addAction("Download")
             menu.addAction("Delete")
@@ -242,7 +258,12 @@ class BrowserWidget(QWidget):
                 menu.addAction("New File")
         act = menu.exec(self.table.mapToGlobal(pos))
         if act:
-            if item:
+            # Check if it's an "Open With" action
+            if act.data() and isinstance(act.data(), dict) and "app" in act.data():
+                data = act.data()
+                if self.on_open_with:
+                    self.on_open_with(data["path"], data["app"])
+            elif item:
                 name_lower = item["name"].lower()
                 if act.text() == "Play in VLC" and item["type"] == "file" and self._is_video(name_lower):
                     self.on_play(item["path"])
@@ -273,6 +294,19 @@ class BrowserWidget(QWidget):
                     menu.addAction("Play in VLC")
                 else:
                     menu.addAction("Open")
+
+                # Add "Open With" submenu
+                if self.on_open_with:
+                    open_with_menu = menu.addMenu("Open With")
+                    apps = self._get_associated_apps(data["name"])
+                    if apps:
+                        for app_name, app_path in apps:
+                            action = open_with_menu.addAction(app_name)
+                            action.setData({"path": data["path"], "app": app_path})
+                    open_with_menu.addSeparator()
+                    choose_action = open_with_menu.addAction("Choose another app...")
+                    choose_action.setData({"path": data["path"], "app": None})
+
             menu.addAction("Rename")
             menu.addAction("Download")
             menu.addAction("Delete")
@@ -284,7 +318,12 @@ class BrowserWidget(QWidget):
                 menu.addAction("New File")
         act = menu.exec(self.icon_list.mapToGlobal(pos))
         if act:
-            if data:
+            # Check if it's an "Open With" action
+            if act.data() and isinstance(act.data(), dict) and "app" in act.data():
+                act_data = act.data()
+                if self.on_open_with:
+                    self.on_open_with(act_data["path"], act_data["app"])
+            elif data:
                 name_lower = data["name"].lower()
                 if act.text() == "Play in VLC" and data["type"] == "file" and self._is_video(name_lower):
                     self.on_play(data["path"])
@@ -389,3 +428,130 @@ class BrowserWidget(QWidget):
                 self._start_next_thumb()
 
             reply.finished.connect(_on_finished)
+
+    def _get_associated_apps(self, filename: str):
+        """Get list of associated applications for a file extension from Windows registry."""
+        import os
+        import winreg
+
+        # Get file extension
+        _, ext = os.path.splitext(filename)
+        if not ext:
+            return []
+
+        ext = ext.lower()
+        apps = []
+
+        try:
+            # Try to get associated applications from registry
+            # Check HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                   f"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{ext}\\OpenWithList") as key:
+                    i = 0
+                    while True:
+                        try:
+                            app_name = winreg.EnumValue(key, i)[1]
+                            if app_name and isinstance(app_name, str) and app_name != "MRUList":
+                                # Try to find the full path
+                                app_path = self._find_app_path(app_name)
+                                if app_path:
+                                    # Get friendly name (without .exe)
+                                    friendly_name = os.path.splitext(app_name)[0]
+                                    apps.append((friendly_name, app_path))
+                            i += 1
+                        except OSError:
+                            break
+            except FileNotFoundError:
+                pass
+
+            # Also check default program
+            try:
+                with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, ext) as key:
+                    prog_id = winreg.QueryValue(key, None)
+                    if prog_id:
+                        try:
+                            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, f"{prog_id}\\shell\\open\\command") as cmd_key:
+                                cmd = winreg.QueryValue(cmd_key, None)
+                                if cmd:
+                                    # Extract exe path from command
+                                    import shlex
+                                    parts = shlex.split(cmd.replace('"', '"').replace('"', '"'))
+                                    if parts:
+                                        exe_path = parts[0]
+                                        if os.path.exists(exe_path):
+                                            app_name = os.path.basename(exe_path)
+                                            friendly_name = os.path.splitext(app_name)[0]
+                                            # Add default app at the beginning if not already in list
+                                            if not any(a[1].lower() == exe_path.lower() for a in apps):
+                                                apps.insert(0, (f"{friendly_name} (default)", exe_path))
+                        except FileNotFoundError:
+                            pass
+            except FileNotFoundError:
+                pass
+
+            # Add common apps for specific extensions
+            common_apps = self._get_common_apps_for_ext(ext)
+            for app_name, app_path in common_apps:
+                if os.path.exists(app_path) and not any(a[1].lower() == app_path.lower() for a in apps):
+                    apps.append((app_name, app_path))
+
+        except Exception:
+            pass
+
+        return apps
+
+    def _find_app_path(self, app_name: str):
+        """Find full path of an application."""
+        import os
+        import winreg
+
+        # Check if it's already a full path
+        if os.path.exists(app_name):
+            return app_name
+
+        # Search in App Paths registry
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                               f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{app_name}") as key:
+                path = winreg.QueryValue(key, None)
+                if path and os.path.exists(path):
+                    return path
+        except FileNotFoundError:
+            pass
+
+        # Search in PATH environment variable
+        import shutil
+        path = shutil.which(app_name)
+        if path:
+            return path
+
+        return None
+
+    def _get_common_apps_for_ext(self, ext: str):
+        """Return common applications for specific file extensions."""
+        import os
+
+        common = []
+
+        # Text files
+        if ext in ['.txt', '.log', '.md', '.json', '.xml', '.csv']:
+            notepad_path = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'notepad.exe')
+            if os.path.exists(notepad_path):
+                common.append(('Notepad', notepad_path))
+
+        # Images
+        if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']:
+            paint_path = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'System32', 'mspaint.exe')
+            if os.path.exists(paint_path):
+                common.append(('Paint', paint_path))
+
+        # Videos
+        if ext in ['.mp4', '.avi', '.mkv', '.mov', '.wmv']:
+            # Windows Media Player
+            wmp_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'),
+                                   'Windows Media Player', 'wmplayer.exe')
+            if os.path.exists(wmp_path):
+                common.append(('Windows Media Player', wmp_path))
+
+        return common
