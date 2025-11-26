@@ -118,16 +118,100 @@ class MainWindow(QMainWindow):
             self.login_action.setText("Login")
             self._clear_saved_session()
         else:
+            # Show login dialog
             dlg = LoginDialog()
+
+            # Add a "Connect without login" button
+            from PyQt6.QtWidgets import QPushButton
+            connect_btn = QPushButton("Connect without login")
+            connect_btn.clicked.connect(lambda: self._try_connect_without_auth(dlg))
+            dlg.layout().insertWidget(dlg.layout().count() - 1, connect_btn)
+
             dlg.login_btn.clicked.connect(lambda: self._do_login(dlg))
             dlg.exec()
+
+    def _try_connect_without_auth(self, dlg: LoginDialog):
+        """Try to connect to server without authentication (for when auth is disabled)."""
+        base = dlg.host_input.text().strip()
+        if not base:
+            QMessageBox.warning(self, "Missing info", "Please enter server URL.")
+            return
+
+        client = APIClient(base)
+        try:
+            # Probe files endpoint WITHOUT any token; if server has auth disabled,
+            # this should succeed. No server changes required.
+            try:
+                items = client.list_files("/")
+                _ = len(items)  # touch to ensure JSON parsed
+                print("DEBUG(no-auth): list_files('/') succeeded without token")
+                no_auth_mode = True
+            except Exception as probe_err:
+                # If it's a 401, try anonymous login fallback
+                import requests as _req
+                status = getattr(getattr(probe_err, 'response', None), 'status_code', None)
+                print(f"DEBUG(no-auth): probe failed, status={status}, err={probe_err}")
+                if isinstance(probe_err, _req.exceptions.HTTPError) and status == 401:
+                    try:
+                        from api.auth import AuthClient
+                        auth = AuthClient(base)
+                        token = auth.login("anonymous", "anonymous")
+                        if not token:
+                            raise RuntimeError("Server requires authentication and anonymous login failed")
+                        client.set_token(token)
+                        print("DEBUG(no-auth): Anonymous login succeeded, token acquired")
+                        # Verify with token
+                        items = client.list_files("/")
+                        _ = len(items)
+                        no_auth_mode = False
+                    except Exception as anon_err:
+                        print(f"DEBUG(no-auth): anonymous login fallback failed: {anon_err}")
+                        raise
+                else:
+                    # Not a 401 or different failure
+                    raise
+
+            # Wire up client everywhere
+            self.api_client = client
+            token_dbg = client.token if getattr(client, 'token', None) else None
+            print(f"DEBUG: Set api_client with token: {token_dbg}")
+            self.browser.set_api_client(client)
+            print("DEBUG: Set browser api_client")
+            self.details.set_api_client(client)
+            print("DEBUG: Set details api_client")
+            self.statusBar().showMessage(f"Connected to {base} ({'auth disabled' if token_dbg is None else 'anonymous auth'})")
+            self.login_action.setText("Logout")
+            print("DEBUG: About to load browser path")
+            try:
+                self.browser.load_path("/")
+                print("DEBUG: Browser path loaded successfully")
+            except Exception as load_err:
+                print(f"ERROR loading root path: {load_err}")
+                import traceback
+                traceback.print_exc()
+            # Persist only if we have a token (anonymous auth mode)
+            if token_dbg:
+                print("DEBUG: About to save session (anonymous auth)")
+                self._save_session(base, token_dbg, "anonymous")
+            print("DEBUG: About to accept dialog (no-auth/anon mode)")
+            dlg.accept()
+            print("DEBUG: Dialog accepted")
+        except Exception as e:
+            import traceback
+            print(f"ERROR in _try_connect_without_auth: {e}")
+            traceback.print_exc()
+            QMessageBox.critical(self, "Connection failed",
+                               f"Could not connect without authentication: {e}\n\nPlease try with credentials.")
 
     def _do_login(self, dlg: LoginDialog):
         base = dlg.host_input.text().strip()
         user = dlg.user_input.text().strip()
         pwd = dlg.pass_input.text().strip()
-        if not base or not user or not pwd:
-            QMessageBox.warning(self, "Missing info", "Please fill all fields.")
+        if not base:
+            QMessageBox.warning(self, "Missing info", "Please enter server URL.")
+            return
+        if not user or not pwd:
+            QMessageBox.warning(self, "Missing info", "Please fill username and password.")
             return
         client = APIClient(base)
         try:
@@ -144,7 +228,12 @@ class MainWindow(QMainWindow):
             self.details.set_api_client(client)
             self.statusBar().showMessage(f"Connected to {base}")
             self.login_action.setText("Logout")
-            self.browser.load_path("/")
+            try:
+                self.browser.load_path("/")
+            except Exception as load_err:
+                print(f"Error loading root path: {load_err}")
+                import traceback
+                traceback.print_exc()
             # Persist session for 30 days, if requested
             try:
                 if getattr(dlg, 'remember_check', None) is None or dlg.remember_check.isChecked():
@@ -155,7 +244,9 @@ class MainWindow(QMainWindow):
                 pass
             dlg.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to connect: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to connect: {e}\n\n{traceback.format_exc()}")
 
     def _refresh(self):
         if self.api_client:
@@ -423,27 +514,55 @@ class MainWindow(QMainWindow):
         if self._is_image(name_lower):
             try:
                 url = self.api_client.stream_url(path)
-                token = self.api_client.token or None
+                token = self.api_client.token if self.api_client.token else None
                 display_name = os.path.basename(path).lstrip('/') or None
-                viewer = ImageViewer(url, token, display_name=display_name, parent=self)
+
+                # Debug logging
+                print(f"Opening image: {path}")
+                print(f"URL: {url}")
+                print(f"Token: {token}")
+
+                # Create ImageViewer WITHOUT parent to avoid Qt parent-child issues
+                viewer = ImageViewer(url, token, display_name=display_name, parent=None)
+                print("DEBUG main_window: ImageViewer created successfully")
                 viewer.setModal(False)
+                print("DEBUG main_window: setModal(False) completed")
                 # Ensure Qt deletes on close and we drop our ref
                 viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                print("DEBUG main_window: setAttribute WA_DeleteOnClose completed")
                 self._open_image_views.append(viewer)
+                print("DEBUG main_window: Appended to _open_image_views")
                 def _cleanup():
                     try:
                         self._open_image_views.remove(viewer)
                     except ValueError:
                         pass
                 viewer.destroyed.connect(lambda *_: _cleanup())
+                print("DEBUG main_window: Connected destroyed signal")
                 # Connect file_saved signal to refresh browser
                 viewer.file_saved.connect(self._on_image_saved)
+                print("DEBUG main_window: Connected file_saved signal")
+                print("DEBUG main_window: About to call viewer.show()")
                 viewer.show()
+                print("DEBUG main_window: viewer.show() completed")
                 self.statusBar().showMessage("Opening image…", 2000)
+                print("DEBUG main_window: statusBar message set")
+                print("DEBUG main_window: About to return from image open")
+
+                # Force Qt to process pending events before returning
+                from PyQt6.QtCore import QCoreApplication
+                print("DEBUG main_window: Processing pending events")
+                QCoreApplication.processEvents()
+                print("DEBUG main_window: Pending events processed")
+
                 return
             except Exception as e:
-                QMessageBox.critical(self, "Open failed", f"Could not open image: {e}")
+                print(f"DEBUG main_window: EXCEPTION in image open: {e}")
+                import traceback
+                traceback.print_exc()
+                QMessageBox.critical(self, "Open failed", f"Could not open image: {e}\n\n{traceback.format_exc()}")
                 return
+        print("DEBUG main_window: Not an image, proceeding to download")
         # Build temp destination with original extension
         base_name = os.path.basename(path).lstrip('/')
         if not base_name:

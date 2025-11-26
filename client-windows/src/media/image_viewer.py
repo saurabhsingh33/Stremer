@@ -38,12 +38,16 @@ class ImageViewer(QDialog):
 
     def __init__(self, url: str, auth_token: str | None = None, display_name: str | None = None, parent: QWidget | None = None):
         super().__init__(parent)
+        print(f"DEBUG ImageViewer: Starting init with url={url}, token={auth_token}")
         self._url = url
         self._token = auth_token
+        print("DEBUG ImageViewer: About to parse stream URL")
         # Parse base URL and server path from stream URL
         self._base_url, self._server_path = self._parse_stream_url(url)
+        print(f"DEBUG ImageViewer: Parsed base_url={self._base_url}, server_path={self._server_path}")
         # Title: prefer provided display_name, else derive from URL path query
         self.setWindowTitle(self._derive_title(display_name))
+        print("DEBUG ImageViewer: Set window title")
         # Enable maximize (and minimize) buttons on the title bar
         try:
             self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
@@ -51,21 +55,28 @@ class ImageViewer(QDialog):
         except Exception:
             pass
         self.resize(1000, 700)
+        print("DEBUG ImageViewer: Resized window")
 
         self._net = QNetworkAccessManager(self)
+        print("DEBUG ImageViewer: Created network manager")
 
         # UI
         self._toolbar = QToolBar(self)
+        print("DEBUG ImageViewer: Created toolbar")
         self._toolbar.setMovable(False)
         self._toolbar.setIconSize(QSize(20, 20))
         # Actions with icons
         self._act_zoom_in = QAction(self)
         self._act_zoom_out = QAction(self)
         self._act_fit = QAction(self)
+        print("DEBUG ImageViewer: Created zoom actions")
         # Use custom-drawn icons (magnifier +/- and a frame for fit)
         self._act_zoom_in.setIcon(self._make_zoom_icon(plus=True))
+        print("DEBUG ImageViewer: Created zoom_in icon")
         self._act_zoom_out.setIcon(self._make_zoom_icon(plus=False))
+        print("DEBUG ImageViewer: Created zoom_out icon")
         self._act_fit.setIcon(self._make_fit_icon())
+        print("DEBUG ImageViewer: Created fit icon")
         self._act_zoom_in.setToolTip("Zoom In")
         self._act_zoom_out.setToolTip("Zoom Out")
         self._act_fit.setToolTip("Fit to window (Ctrl+0)")
@@ -212,7 +223,9 @@ class ImageViewer(QDialog):
 
         self._toolbar.addWidget(self._save_button)
 
+        print("DEBUG ImageViewer: About to call _fetch()")
         self._fetch()
+        print("DEBUG ImageViewer: _fetch() completed, init done")
 
     def _pen_color(self) -> QColor:
         try:
@@ -311,7 +324,9 @@ class ImageViewer(QDialog):
         return "Image Viewer"
 
     def _fetch(self):
+        print("DEBUG ImageViewer: _fetch() called")
         req = QNetworkRequest(QUrl(self._url))
+        print(f"DEBUG ImageViewer: Created QNetworkRequest for URL: {self._url}")
         # Follow redirects (some servers may redirect /stream)
         try:
             req.setAttribute(QNetworkRequest.Attribute.FollowRedirectsAttribute, True)
@@ -319,17 +334,25 @@ class ImageViewer(QDialog):
             pass
         # Prefer images but accept anything
         req.setRawHeader(b"Accept", b"image/*, */*;q=0.8")
+        print(f"DEBUG ImageViewer: About to set Authorization header, token={self._token}")
         if self._token:
             req.setRawHeader(b"Authorization", f"Bearer {self._token}".encode("utf-8"))
+            print("DEBUG ImageViewer: Authorization header set")
+        print("DEBUG ImageViewer: About to call self._net.get()")
         reply = self._net.get(req)
+        print(f"DEBUG ImageViewer: self._net.get() returned reply: {reply}")
 
         def _finished():
             nonlocal reply
+            print("DEBUG ImageViewer: _finished() callback called")
             try:
+                print("DEBUG ImageViewer: Inside _finished try block")
                 # Gather HTTP status and content-type for diagnostics
                 try:
                     status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
-                except Exception:
+                    print(f"DEBUG ImageViewer: HTTP status: {status}")
+                except Exception as e:
+                    print(f"DEBUG ImageViewer: Exception getting status: {e}")
                     status = None
                 try:
                     reason = reply.attribute(QNetworkRequest.Attribute.HttpReasonPhraseAttribute)
@@ -337,28 +360,41 @@ class ImageViewer(QDialog):
                     reason = None
                 try:
                     ctype = reply.header(QNetworkRequest.KnownHeaders.ContentTypeHeader)
-                except Exception:
+                    print(f"DEBUG ImageViewer: Content-Type: {ctype}")
+                except Exception as e:
+                    print(f"DEBUG ImageViewer: Exception getting content-type: {e}")
                     ctype = None
 
+                print("DEBUG ImageViewer: About to call reply.readAll()")
                 # Try to decode regardless of Qt network 'error' if we received data
                 data: QByteArray = reply.readAll()
+                print(f"DEBUG ImageViewer: readAll() returned {len(data) if data else 0} bytes")
                 pm = QPixmap()
+                print("DEBUG ImageViewer: Created QPixmap, about to loadFromData")
                 loaded = pm.loadFromData(bytes(data)) if data and len(data) > 0 else False
+                print(f"DEBUG ImageViewer: loadFromData result: {loaded}")
                 if loaded:
+                    print("DEBUG ImageViewer: Image loaded successfully, setting pixmap")
                     self._pixmap = pm
                     self._scale = 1.0
+                    print("DEBUG ImageViewer: About to call _update_view")
                     self._update_view(reset=True)
+                    print("DEBUG ImageViewer: _update_view completed")
                     # Show only image details (no debugging info)
                     size_bytes = len(data) if data is not None else 0
                     size_text = f" | {self._fmt_bytes(size_bytes)}" if size_bytes > 0 else ""
                     self._status.setText(self._nice_info() + size_text)
+                    print("DEBUG ImageViewer: Status text set")
                     # Enable saving if we know where this image came from
                     can_save = bool(self._server_path)
                     self._save_button.setEnabled(can_save)
+                    print("DEBUG ImageViewer: Save button enabled")
                     # Enable crop mode now that an image is present
                     self._act_crop_mode.setEnabled(True)
+                    print("DEBUG ImageViewer: Crop mode enabled, returning from _finished")
                     return
 
+                print("DEBUG ImageViewer: Image not loaded, showing error")
                 # If not loaded, report concise error (no debug preview)
                 size = len(data) if data is not None else 0
                 if reply.error():
@@ -368,11 +404,27 @@ class ImageViewer(QDialog):
                 else:
                     msg = "Unsupported image format"
                 self._status.setText(msg)
+                print(f"DEBUG ImageViewer: Error message set: {msg}")
                 return
+            except Exception as e:
+                print(f"DEBUG ImageViewer: EXCEPTION in _finished: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
             finally:
+                print("DEBUG ImageViewer: In _finished finally block")
                 reply.deleteLater()
+                print("DEBUG ImageViewer: reply.deleteLater() called")
 
+        def _error_occurred(error_code):
+            print(f"DEBUG ImageViewer: _error_occurred() called with error code: {error_code}")
+            print(f"DEBUG ImageViewer: Error string: {reply.errorString()}")
+
+        print("DEBUG ImageViewer: About to connect reply.finished signal")
         reply.finished.connect(_finished)
+        print("DEBUG ImageViewer: About to connect reply.errorOccurred signal")
+        reply.errorOccurred.connect(_error_occurred)
+        print("DEBUG ImageViewer: reply.finished and errorOccurred signals connected, exiting _fetch()")
 
     def _nice_info(self) -> str:
         if not self._pixmap:
@@ -561,9 +613,7 @@ class ImageViewer(QDialog):
         if not self._base_url or not dest_path:
             QMessageBox.warning(self, "Cannot save", "Missing destination path.")
             return
-        if not self._token:
-            QMessageBox.warning(self, "Cannot save", "Missing auth token.")
-            return
+        # Note: token may be None if auth is disabled on server
         # PUT /file?path=...
         try:
             from urllib.parse import quote
@@ -576,7 +626,9 @@ class ImageViewer(QDialog):
             req.setAttribute(QNetworkRequest.Attribute.FollowRedirectsAttribute, True)
         except Exception:
             pass
-        req.setRawHeader(b"Authorization", f"Bearer {self._token}".encode("utf-8"))
+        # Only add Authorization header if we have a token
+        if self._token:
+            req.setRawHeader(b"Authorization", f"Bearer {self._token}".encode("utf-8"))
         if mime:
             try:
                 req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, mime)

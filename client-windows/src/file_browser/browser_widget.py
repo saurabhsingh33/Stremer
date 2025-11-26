@@ -40,7 +40,8 @@ class BrowserWidget(QWidget):
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
         self._thumb_cache = {}
-        self._thumb_queue = {}
+        # Track in-flight thumbnail requests by key (path, w, h) without holding item refs
+        self._thumb_inflight: set[tuple[str, int, int]] = set()
         self._thumb_pending = []  # list of (key_tuple, url)
         self._thumb_active = 0
         self._back_stack: list[str] = []
@@ -282,7 +283,9 @@ class BrowserWidget(QWidget):
                 if act.text() == "Play in VLC" and item["type"] == "file" and self._is_video(name_lower):
                     self.on_play(item["path"])
                 elif act.text() == "Open" and item["type"] == "file" and self.on_open:
+                    print(f"DEBUG browser_widget: About to call on_open({item['path']})")
                     self.on_open(item["path"])
+                    print("DEBUG browser_widget: on_open() returned")
                 elif act.text() == "Rename" and self.on_rename:
                     self.on_rename(item["path"])
                 elif act.text() == "Download":
@@ -342,7 +345,9 @@ class BrowserWidget(QWidget):
                 if act.text() == "Play in VLC" and data["type"] == "file" and self._is_video(name_lower):
                     self.on_play(data["path"])
                 elif act.text() == "Open" and data["type"] == "file" and self.on_open:
+                    print(f"DEBUG browser_widget (icons): About to call on_open({data['path']})")
                     self.on_open(data["path"])
+                    print("DEBUG browser_widget (icons): on_open() returned")
                 elif act.text() == "Rename" and self.on_rename:
                     self.on_rename(data["path"])
                 elif act.text() == "Download":
@@ -356,6 +361,8 @@ class BrowserWidget(QWidget):
                     self.on_new_folder(self.current_path)
                 elif act.text() == "New File" and self.on_new_file:
                     self.on_new_file(self.current_path)
+
+        print("DEBUG browser_widget: _open_context_menu_icons completed")
 
     def _on_double_click(self):
         item = self._selected_item()
@@ -393,14 +400,14 @@ class BrowserWidget(QWidget):
         # Cache key
         key = (path, self.icon_list.iconSize().width(), self.icon_list.iconSize().height())
         if key in self._thumb_cache:
+            # Apply cached pixmap to any current items matching this path
             pix = self._thumb_cache[key]
-            list_item.setIcon(QIcon(pix))
+            self._apply_thumb_to_items(key, pix)
             return
         # Avoid duplicate requests
-        if key in self._thumb_queue:
-            self._thumb_queue[key].append(list_item)
+        if key in self._thumb_inflight:
             return
-        self._thumb_queue[key] = [list_item]
+        self._thumb_inflight.add(key)
 
         url = self.api_client.thumb_url(path, self.icon_list.iconSize().width(), self.icon_list.iconSize().height())
         # Queue request; we'll limit concurrent downloads
@@ -425,8 +432,8 @@ class BrowserWidget(QWidget):
                 finally:
                     reply.deleteLater()
                 if not data:
-                    # Clean queue for this key
-                    self._thumb_queue.pop(key, None)
+                    # Nothing to do; drop inflight marker
+                    pass
                 else:
                     pixmap = QPixmap()
                     if pixmap.loadFromData(bytes(data)):
@@ -434,14 +441,36 @@ class BrowserWidget(QWidget):
                         if pixmap.width() > self.icon_list.iconSize().width() or pixmap.height() > self.icon_list.iconSize().height():
                             pixmap = pixmap.scaled(self.icon_list.iconSize(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                         self._thumb_cache[key] = pixmap
-                        for li in self._thumb_queue.get(key, []):
-                            li.setIcon(QIcon(pixmap))
-                    self._thumb_queue.pop(key, None)
+                        self._apply_thumb_to_items(key, pixmap)
+                # Clean up inflight marker
+                if key in self._thumb_inflight:
+                    self._thumb_inflight.remove(key)
                 self._thumb_active = max(0, self._thumb_active - 1)
                 # Kick off next batch
                 self._start_next_thumb()
 
             reply.finished.connect(_on_finished)
+
+    def _apply_thumb_to_items(self, key: tuple[str, int, int], pixmap: QPixmap):
+        """Safely apply thumbnail to any current items for the given key's path.
+        Avoids keeping stale QListWidgetItem references across async boundaries.
+        """
+        path, _w, _h = key
+        icon = QIcon(pixmap)
+        # Update in icons view if visible
+        try:
+            for i in range(self.icon_list.count()):
+                it = self.icon_list.item(i)
+                if not it:
+                    continue
+                data = it.data(Qt.ItemDataRole.UserRole)
+                if not data:
+                    continue
+                if data.get("path") == path:
+                    it.setIcon(icon)
+        except Exception:
+            # Be defensive; never crash UI due to thumbnail update
+            pass
 
     def _get_associated_apps(self, filename: str):
         """Get list of associated applications for a file extension from Windows registry."""

@@ -20,7 +20,11 @@ class APIClient:
         return resp.json().get("items", [])
 
     def stream_url(self, path: str) -> str:
-        return f"{self.base_url}/stream?path={requests.utils.quote(path, safe='')}&token={self.token or ''}"
+        # Only include token parameter if we have a valid token
+        if self.token:
+            return f"{self.base_url}/stream?path={requests.utils.quote(path, safe='')}&token={self.token}"
+        else:
+            return f"{self.base_url}/stream?path={requests.utils.quote(path, safe='')}"
 
     def thumb_url(self, path: str, w: int = 256, h: int = 256) -> str:
         return f"{self.base_url}/thumb?path={requests.utils.quote(path, safe='')}&w={w}&h={h}"
