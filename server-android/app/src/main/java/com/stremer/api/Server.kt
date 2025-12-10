@@ -14,14 +14,32 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.core.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 object Server {
     private var engine: ApplicationEngine? = null
     private var currentPort: Int = 8080
+    // Expose active client count as a StateFlow so UI/services can observe it in real time
+    private val _clientCount = MutableStateFlow(0)
+    val clientCount: StateFlow<Int> = _clientCount
 
     fun start(port: Int = 8080) {
         currentPort = port
         engine = embeddedServer(CIO, port = port) {
+            // Intercept calls to maintain an active client count
+            intercept(ApplicationCallPipeline.Monitoring) {
+                try {
+                    // Increment
+                    _clientCount.value = _clientCount.value + 1
+                    proceed()
+                } finally {
+                    // Decrement when call finished
+                    try {
+                        _clientCount.value = (_clientCount.value - 1).coerceAtLeast(0)
+                    } catch (_: Exception) { }
+                }
+            }
             install(ContentNegotiation) {
                 json()
             }

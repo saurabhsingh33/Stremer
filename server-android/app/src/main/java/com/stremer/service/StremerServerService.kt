@@ -7,12 +7,20 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.stremer.MainActivity
 import com.stremer.api.Server
 
 class StremerServerService : android.app.Service() {
+    private val serviceJob = Job()
+    private val serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
     override fun onBind(intent: Intent?) = null
 
     override fun onCreate() {
@@ -27,6 +35,8 @@ class StremerServerService : android.app.Service() {
                 stopServer()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
+                // stop any background coroutines
+                serviceScope.cancel()
                 START_NOT_STICKY
             }
             else -> {
@@ -34,7 +44,23 @@ class StremerServerService : android.app.Service() {
                 if (!Server.isRunning()) {
                     Server.start(8080)
                 }
-                startForeground(NOTIF_ID, buildNotification())
+                startForeground(NOTIF_ID, buildNotification(0))
+
+                // Collect client count updates and refresh notification
+                serviceScope.launch {
+                    try {
+                        Server.clientCount.collect { count ->
+                            try {
+                                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                                nm.notify(NOTIF_ID, buildNotification(count))
+                            } catch (e: Exception) {
+                                android.util.Log.w("StremerServerService", "Failed to update notification: ${e.message}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("StremerServerService", "Client count collector failed: ${e.message}")
+                    }
+                }
                 START_STICKY
             }
         }
@@ -43,6 +69,7 @@ class StremerServerService : android.app.Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopServer()
+        serviceScope.cancel()
     }
 
     private fun stopServer() {
@@ -62,7 +89,7 @@ class StremerServerService : android.app.Service() {
         }
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(clientCount: Int): Notification {
         val openIntent = Intent(this, MainActivity::class.java)
         val openPending = PendingIntent.getActivity(
             this, 0, openIntent,
@@ -73,8 +100,10 @@ class StremerServerService : android.app.Service() {
             this, 1, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
         )
-
-        val text = if (Server.isRunning()) "Server running on port 8080" else "Server starting…"
+        val baseText = if (Server.isRunning()) "Server running on port ${Server.getPort()}" else "Server starting…"
+        val text = if (Server.isRunning()) {
+            if (clientCount > 0) "$baseText — $clientCount client${if (clientCount == 1) "" else "s"} connected" else baseText
+        } else baseText
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle("Stremer")
