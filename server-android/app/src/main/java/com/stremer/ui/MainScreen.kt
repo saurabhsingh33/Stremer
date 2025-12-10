@@ -55,10 +55,25 @@ fun MainScreen() {
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = if (serverRunning || Server.isRunning()) "Server is running on LAN" else "Server is stopped",
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        if (serverRunning || Server.isRunning()) {
+            Text(
+                text = "Server is running on LAN",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Connect to: ${Server.getServerUrl()}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        } else {
+            Text(
+                text = "Server is stopped",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = if (storageSelected) "✓ Storage selected" else "⚠ No storage selected",

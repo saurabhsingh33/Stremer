@@ -17,8 +17,10 @@ import io.ktor.utils.io.core.*
 
 object Server {
     private var engine: ApplicationEngine? = null
+    private var currentPort: Int = 8080
 
     fun start(port: Int = 8080) {
+        currentPort = port
         engine = embeddedServer(CIO, port = port) {
             install(ContentNegotiation) {
                 json()
@@ -480,4 +482,30 @@ object Server {
     }
 
     fun isRunning(): Boolean = engine != null
+
+    fun getPort(): Int = currentPort
+
+    fun getServerUrl(): String {
+        val ip = getLocalIpAddress() ?: "localhost"
+        return "http://$ip:$currentPort"
+    }
+
+    private fun getLocalIpAddress(): String? {
+        return try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            for (networkInterface in interfaces) {
+                if (!networkInterface.isUp || networkInterface.isLoopback) continue
+                val addresses = networkInterface.inetAddresses
+                for (address in addresses) {
+                    if (!address.isLoopbackAddress && address is java.net.Inet4Address) {
+                        return address.hostAddress
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            android.util.Log.e("Server", "Error getting local IP", e)
+            null
+        }
+    }
 }
