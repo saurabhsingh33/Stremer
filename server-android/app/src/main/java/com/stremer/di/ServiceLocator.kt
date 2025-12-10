@@ -95,4 +95,16 @@ object ServiceLocator {
         }
         rootSetFlow.value = false
     }
+
+    /**
+     * Return a friendly display string for the currently-selected root, or null if none.
+     */
+    fun getRootDisplayName(): String? {
+        return try {
+            saf?.rootDisplayName()
+        } catch (e: Exception) {
+            android.util.Log.w("ServiceLocator", "getRootDisplayName failed: ${e.message}")
+            null
+        }
+    }
 }

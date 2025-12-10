@@ -153,6 +153,36 @@ class SafHelper(private val activity: Activity) {
 
     fun getContext(): android.content.Context = activity
 
+    /**
+     * Return a friendly display name for the selected root, e.g. "DCIM (primary:DCIM)" or a
+     * short representation of the URI. Returns null when no root is selected.
+     */
+    fun rootDisplayName(): String? {
+        val ru = rootUri ?: return null
+        // Try to extract the tree segment like "primary:DCIM" from the URI
+        val lastSeg = try {
+            ru.lastPathSegment ?: ru.path ?: ru.toString()
+        } catch (e: Exception) {
+            ru.toString()
+        }
+
+        val candidate = lastSeg.split('/').lastOrNull() ?: lastSeg
+        if (candidate.contains(":")) {
+            val parts = candidate.split(":", limit = 2)
+            val prefix = parts.getOrNull(0) ?: ""
+            val rest = parts.getOrNull(1) ?: ""
+            val base = if (prefix == "primary") "sdcard" else prefix
+            return if (rest.isNotEmpty()) "$base/$rest" else base
+        }
+
+        // Fallback to DocumentFile name if available
+        val docName = try { root()?.name } catch (e: Exception) { null }
+        if (!docName.isNullOrEmpty()) return docName
+
+        // Last resort: return a shortened URI path
+        return try { ru.path ?: ru.toString() } catch (e: Exception) { ru.toString() }
+    }
+
     fun createDirectory(parentPath: String, name: String): Boolean {
         val parent = resolve(parentPath) ?: return false
         if (!parent.isDirectory) return false

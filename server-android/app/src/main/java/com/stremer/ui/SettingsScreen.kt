@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.stremer.settings.SettingsRepository
+import com.stremer.di.ServiceLocator
 
 @Composable
 fun SettingsScreen() {
@@ -102,5 +103,18 @@ fun SettingsScreen() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground
         )
+
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = {
+            try {
+                ServiceLocator.clearRoot()
+                android.widget.Toast.makeText(ctx, "Storage cleared", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                android.util.Log.w("SettingsScreen", "Failed to clear storage: ${e.message}")
+                android.widget.Toast.makeText(ctx, "Failed to clear storage", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }) {
+            Text("Clear Storage")
+        }
     }
 }

@@ -87,10 +87,23 @@ fun MainScreen() {
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = if (storageSelected) "✓ Storage selected" else "⚠ No storage selected",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        Column {
+            Text(
+                text = if (storageSelected) "✓ Storage selected" else "⚠ No storage selected",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            // Show a short friendly storage name when available (recomputes when storageSelected changes)
+            val storageDisplay = remember(storageSelected) { ServiceLocator.getRootDisplayName() }
+            if (!storageDisplay.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Storage: $storageDisplay",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        }
     }
 }
