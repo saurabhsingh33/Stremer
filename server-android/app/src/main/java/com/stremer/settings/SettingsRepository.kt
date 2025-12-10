@@ -9,6 +9,7 @@ object SettingsRepository {
     private const val KEY_AUTH_ENABLED = "auth_enabled"
     private const val KEY_USERNAME = "auth_username"
     private const val KEY_PASSWORD = "auth_password"
+    private const val KEY_ROOT_URI = "root_uri"
 
     @Volatile
     private var prefs: android.content.SharedPreferences? = null
@@ -46,5 +47,15 @@ object SettingsRepository {
             .putString(KEY_USERNAME, username?.trim()?.ifEmpty { null })
             .putString(KEY_PASSWORD, password)
             .apply()
+    }
+
+    fun getRootUri(): String? = requirePrefs().getString(KEY_ROOT_URI, null)
+
+    fun setRootUri(uri: String?) {
+        if (uri == null) {
+            requirePrefs().edit().remove(KEY_ROOT_URI).apply()
+        } else {
+            requirePrefs().edit().putString(KEY_ROOT_URI, uri).apply()
+        }
     }
 }

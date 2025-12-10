@@ -15,17 +15,18 @@ import com.stremer.service.StremerServerService
 @Composable
 fun MainScreen() {
     var serverRunning by remember { mutableStateOf(Server.isRunning()) }
-    var storageSelected by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         ServiceLocator.init(context as android.app.Activity)
     }
 
+    // Observe actual storage state (survives navigation) via ServiceLocator flow
+    val storageSelected by ServiceLocator.rootSetFlow.collectAsState(initial = ServiceLocator.isRootSet())
+
     val storagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             ServiceLocator.setRoot(uri)
-            storageSelected = true
         }
     }
 
@@ -39,15 +40,26 @@ fun MainScreen() {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = {
-                if (serverRunning) {
-                    StremerServerService.stop(context)
-                    serverRunning = false
-                } else {
-                    StremerServerService.start(context)
-                    serverRunning = true
+            Button(
+                enabled = serverRunning || storageSelected,
+                onClick = {
+                    if (serverRunning) {
+                        StremerServerService.stop(context)
+                        serverRunning = false
+                    } else {
+                        if (!ServiceLocator.isRootSet()) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Please select storage first",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            StremerServerService.start(context)
+                            serverRunning = true
+                        }
+                    }
                 }
-            }) {
+            ) {
                 Text(if (serverRunning) "Stop Server" else "Start Server")
             }
             Button(onClick = { storagePicker.launch(null) }) {
