@@ -442,6 +442,10 @@ class MainWindow(QMainWindow):
             self.url = url
             self.dest = dest
             self.headers = headers or {}
+            self._cancel = False
+
+        def cancel(self):
+            self._cancel = True
 
         def run(self):
             try:
@@ -451,6 +455,19 @@ class MainWindow(QMainWindow):
                     downloaded = 0
                     with open(self.dest, 'wb') as f:
                         for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if self._cancel:
+                                # Clean up partial file on cancel
+                                try:
+                                    f.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    if os.path.exists(self.dest):
+                                        os.remove(self.dest)
+                                except Exception:
+                                    pass
+                                self.error.emit('Canceled')
+                                return
                             if chunk:
                                 f.write(chunk)
                                 downloaded += len(chunk)
@@ -471,6 +488,10 @@ class MainWindow(QMainWindow):
             self.api_client = api_client
             self.src_dir = src_dir if src_dir else "/"
             self.dest_dir = dest_dir
+            self._cancel = False
+
+        def cancel(self):
+            self._cancel = True
 
         def run(self):
             try:
@@ -503,6 +524,18 @@ class MainWindow(QMainWindow):
                         r.raise_for_status()
                         with open(dest_path, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=1024 * 64):
+                                if self._cancel:
+                                    try:
+                                        f.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        if os.path.exists(dest_path):
+                                            os.remove(dest_path)
+                                    except Exception:
+                                        pass
+                                    self.error.emit('Canceled')
+                                    return
                                 if chunk:
                                     f.write(chunk)
                     pct = int(idx * 100 / total)
@@ -684,9 +717,21 @@ class MainWindow(QMainWindow):
         # Don't add Authorization header since token is already in URL
         headers = {}
 
-        self.statusBar().showMessage(f"Downloading {base_name}…")
+        from PyQt6.QtWidgets import QProgressDialog
+        from PyQt6.QtCore import Qt
+
         self._dl = self._DownloadThread(url, dest, headers)
-        self._dl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading {base_name}… {p}%"))
+        dlg = QProgressDialog(f"Downloading {base_name}…", "Cancel", 0, 100, self)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setValue(0)
+        dlg.canceled.connect(self._dl.cancel)
+        # update UI from progress
+        self._dl.progress.connect(lambda p: (dlg.setValue(p), self.statusBar().showMessage(f"Downloading {base_name}… {p}%")))
+        # ensure dialog closes on completion/error
+        self._dl.done.connect(lambda _p: dlg.close())
+        self._dl.error.connect(lambda _m: dlg.close())
         def _done(local_path: str):
             self.statusBar().showMessage(f"Opening {base_name}", 3000)
             try:
@@ -702,6 +747,7 @@ class MainWindow(QMainWindow):
         self._dl.done.connect(_done)
         self._dl.error.connect(_err)
         self._dl.start()
+        dlg.show()
 
     def _open_with(self, path: str, app_path: str | None):
         """Open file with specified application or show file chooser."""
@@ -729,9 +775,19 @@ class MainWindow(QMainWindow):
         # Don't add Authorization header since token is already in URL
         headers = {}
 
-        self.statusBar().showMessage(f"Downloading {base_name}…")
+        from PyQt6.QtWidgets import QProgressDialog
+        from PyQt6.QtCore import Qt
+
         self._dl = self._DownloadThread(url, dest, headers)
-        self._dl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading {base_name}… {p}%"))
+        dlg = QProgressDialog(f"Downloading {base_name}…", "Cancel", 0, 100, self)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setValue(0)
+        dlg.canceled.connect(self._dl.cancel)
+        self._dl.progress.connect(lambda p: (dlg.setValue(p), self.statusBar().showMessage(f"Downloading {base_name}… {p}%")))
+        self._dl.done.connect(lambda _p: dlg.close())
+        self._dl.error.connect(lambda _m: dlg.close())
 
         def _done(local_path: str):
             self.statusBar().showMessage(f"Opening {base_name} with {os.path.basename(app_path)}", 3000)
@@ -750,6 +806,7 @@ class MainWindow(QMainWindow):
         self._dl.done.connect(_done)
         self._dl.error.connect(_err)
         self._dl.start()
+        dlg.show()
 
     def _play(self, path: str):
         if not self.api_client:
@@ -797,21 +854,41 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Cannot create folder: {e}")
                 return
             self.statusBar().showMessage(f"Downloading folder {base_name}…")
+            from PyQt6.QtWidgets import QProgressDialog
+            from PyQt6.QtCore import Qt
+
             self._ddl = self._DownloadDirThread(self.api_client, src_path, target_dir)
-            self._ddl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading folder {base_name}… {p}%"))
-            self._ddl.message.connect(lambda m: self.statusBar().showMessage(m))
-            self._ddl.done.connect(lambda p: self.statusBar().showMessage(f"Folder saved to {p}", 5000))
-            self._ddl.error.connect(lambda msg: QMessageBox.critical(self, "Download failed", msg))
+            dlg = QProgressDialog(f"Downloading folder {base_name}…", "Cancel", 0, 100, self)
+            dlg.setWindowModality(Qt.WindowModality.WindowModal)
+            dlg.setAutoClose(False)
+            dlg.setAutoReset(False)
+            dlg.setValue(0)
+            dlg.canceled.connect(self._ddl.cancel)
+            self._ddl.progress.connect(lambda p: (dlg.setValue(p), self.statusBar().showMessage(f"Downloading folder {base_name}… {p}%")))
+            self._ddl.message.connect(lambda m: (dlg.setLabelText(m), self.statusBar().showMessage(m)))
+            self._ddl.done.connect(lambda p: (dlg.close(), self.statusBar().showMessage(f"Folder saved to {p}", 5000)))
+            self._ddl.error.connect(lambda msg: (dlg.close(), QMessageBox.critical(self, "Download failed", msg)))
             self._ddl.start()
+            dlg.show()
         else:
             dest = os.path.join(dest_folder, base_name)
             url = self.api_client.stream_url(src_path)
             headers = {}
             if self.api_client.token:
                 headers["Authorization"] = f"Bearer {self.api_client.token}"
-            self.statusBar().showMessage(f"Downloading {base_name}…")
+            from PyQt6.QtWidgets import QProgressDialog
+            from PyQt6.QtCore import Qt
+
             self._dl = self._DownloadThread(url, dest, headers)
-            self._dl.progress.connect(lambda p: self.statusBar().showMessage(f"Downloading {base_name}… {p}%"))
+            dlg = QProgressDialog(f"Downloading {base_name}…", "Cancel", 0, 100, self)
+            dlg.setWindowModality(Qt.WindowModality.WindowModal)
+            dlg.setAutoClose(False)
+            dlg.setAutoReset(False)
+            dlg.setValue(0)
+            dlg.canceled.connect(self._dl.cancel)
+            self._dl.progress.connect(lambda p: (dlg.setValue(p), self.statusBar().showMessage(f"Downloading {base_name}… {p}%")))
+            self._dl.done.connect(lambda _p: dlg.close())
+            self._dl.error.connect(lambda _m: dlg.close())
             def _done(local_path: str):
                 self.statusBar().showMessage(f"Saved to {local_path}", 5000)
             def _err(msg: str):
@@ -820,6 +897,7 @@ class MainWindow(QMainWindow):
             self._dl.done.connect(_done)
             self._dl.error.connect(_err)
             self._dl.start()
+            dlg.show()
 
     def _rename(self, path: str):
         if not self.api_client:
