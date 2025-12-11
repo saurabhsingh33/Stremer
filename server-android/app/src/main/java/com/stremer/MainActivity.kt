@@ -25,9 +25,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.animateColorAsState
 import com.stremer.ui.theme.StremerTheme
 import com.stremer.ui.MainScreen
 import com.stremer.ui.SettingsScreen
+import com.stremer.api.Server
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,6 +38,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             StremerTheme {
                 var inSettings by remember { mutableStateOf(false) }
+                var serverRunning by remember { mutableStateOf(Server.isRunning()) }
+
+                // Poll Server.isRunning() every 500ms to keep dot color in sync
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        kotlinx.coroutines.delay(500)
+                        serverRunning = Server.isRunning()
+                    }
+                }
+
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -42,11 +55,12 @@ class MainActivity : ComponentActivity() {
                                         if (inSettings) {
                                             Text("Settings")
                                         } else {
+                                            val dotColor by animateColorAsState(targetValue = if (serverRunning) androidx.compose.ui.graphics.Color(0xFF4CAF50) else androidx.compose.ui.graphics.Color(0xFFFF5252))
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Box(modifier = Modifier
                                                     .size(12.dp)
                                                     .clip(CircleShape)
-                                                    .background(MaterialTheme.colorScheme.primary))
+                                                    .background(dotColor))
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Text("Server", style = MaterialTheme.typography.titleSmall)
                                             }
