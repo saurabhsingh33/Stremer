@@ -5,6 +5,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -21,6 +25,14 @@ fun MainScreen() {
         ServiceLocator.init(context as android.app.Activity)
     }
 
+    // Poll Server.isRunning() every 500ms to keep UI in sync with actual engine state
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(500)
+            serverRunning = Server.isRunning()
+        }
+    }
+
     // Observe actual storage state (survives navigation) via ServiceLocator flow
     val storageSelected by ServiceLocator.rootSetFlow.collectAsState(initial = ServiceLocator.isRootSet())
 
@@ -30,18 +42,33 @@ fun MainScreen() {
         }
     }
 
+    // Main content column
     Column(modifier = Modifier
         .fillMaxSize()
         .padding(16.dp)) {
-        Text(
-            text = "Stremer Android Server",
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground
-        )
+        // Compact header card with subtle entrance animation
+        androidx.compose.animation.Crossfade(targetState = true) { _ ->
+            Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)) {
+                Row(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    androidx.compose.material3.Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Server",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(text = "Stremer", style = MaterialTheme.typography.titleLarge)
+                        Text(text = "Android Server — manage & share files on LAN", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
+                    }
+                }
+            }
+        }
         Spacer(modifier = Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(
-                enabled = serverRunning || storageSelected,
+                enabled = storageSelected,
                 onClick = {
                     if (serverRunning) {
                         StremerServerService.stop(context)
@@ -67,24 +94,19 @@ fun MainScreen() {
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        if (serverRunning || Server.isRunning()) {
-            Text(
-                text = "Server is running on LAN",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Connect to: ${Server.getServerUrl()}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-        } else {
-            Text(
-                text = "Server is stopped",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground
-            )
+        // Status card with animated color when server running
+        // Use the serverRunning state variable so UI recomposes when polling updates it
+        val bgColor by animateColorAsState(targetValue = if (serverRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface)
+        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = bgColor)) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(text = if (serverRunning) "Server is running on LAN" else "Server is stopped", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                Spacer(modifier = Modifier.height(6.dp))
+                if (serverRunning) {
+                    Text(text = "Connect to: ${Server.getServerUrl()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
+                } else {
+                    Text(text = "Start the server to obtain the LAN address", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                }
+            }
         }
         Spacer(modifier = Modifier.height(8.dp))
         Column {
