@@ -591,6 +591,8 @@ class MainWindow(QMainWindow):
 
                     def create_progress_reader(file_path, file_size):
                         """Create a file reader that tracks upload progress."""
+                        thread_self = self
+
                         class ProgressFileReader:
                             def __init__(self):
                                 self.file = open(file_path, 'rb')
@@ -598,6 +600,14 @@ class MainWindow(QMainWindow):
 
                             def read(self, size=-1):
                                 nonlocal last_update_time
+                                # Abort early if upload was canceled
+                                if getattr(thread_self, 'canceled', False):
+                                    try:
+                                        self.file.close()
+                                    except Exception:
+                                        pass
+                                    raise Exception('Canceled')
+
                                 chunk = self.file.read(size)
                                 self.bytes_read += len(chunk)
 
@@ -623,28 +633,40 @@ class MainWindow(QMainWindow):
                                 return self
 
                             def __exit__(self, *args):
-                                self.file.close()
+                                try:
+                                    self.file.close()
+                                except Exception:
+                                    pass
 
                         return ProgressFileReader()
 
-                    with create_progress_reader(local_file, file_size) as reader:
-                        response = requests.put(
-                            url,
-                            data=reader,
-                            headers=headers,
-                            timeout=600  # 10 minutes for very large files
-                        )
+                    try:
+                        with create_progress_reader(local_file, file_size) as reader:
+                            response = requests.put(
+                                url,
+                                data=reader,
+                                headers=headers,
+                                timeout=600  # 10 minutes for very large files
+                            )
 
-                        if response.status_code == 200:
-                            uploaded_count += 1
-                            uploaded_bytes += file_size
+                            if response.status_code == 200:
+                                uploaded_count += 1
+                                uploaded_bytes += file_size
+                            else:
+                                error_msg = f"Failed to upload {remote_name}: {response.status_code}"
+                                try:
+                                    error_msg += f"\n{response.text}"
+                                except:
+                                    pass
+                                self.error.emit(error_msg)
+                    except Exception as e:
+                        # If cancellation triggered the exception, finish gracefully
+                        if getattr(self, 'canceled', False) and str(e) == 'Canceled':
+                            # Emit done with current progress so UI treats it as canceled
+                            self.done.emit(uploaded_count, uploaded_bytes)
+                            return
                         else:
-                            error_msg = f"Failed to upload {remote_name}: {response.status_code}"
-                            try:
-                                error_msg += f"\n{response.text}"
-                            except:
-                                pass
-                            self.error.emit(error_msg)
+                            self.error.emit(f"Error uploading {remote_name}: {str(e)}")
 
                 except Exception as e:
                     self.error.emit(f"Error uploading {remote_name}: {str(e)}")
