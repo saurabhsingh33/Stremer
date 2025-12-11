@@ -708,17 +708,21 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Open failed", f"Could not open image: {e}\n\n{traceback.format_exc()}")
                 return
         print("DEBUG main_window: Not an image, proceeding to download")
-        # Build temp destination with original extension
+        # Ask user where to save the file instead of using a temp file
         base_name = os.path.basename(path).lstrip('/')
         if not base_name:
             base_name = "file"
-        dest = os.path.join(tempfile.gettempdir(), f"stremer_{uuid.uuid4().hex}_{base_name}")
+        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
+        from PyQt6.QtCore import Qt
+
+        suggested = os.path.join(os.path.expanduser("~"), "Downloads", base_name)
+        dest, _ = QFileDialog.getSaveFileName(self, f"Save {base_name} as", suggested)
+        if not dest:
+            return
+
         url = self.api_client.stream_url(path)
         # Don't add Authorization header since token is already in URL
         headers = {}
-
-        from PyQt6.QtWidgets import QProgressDialog
-        from PyQt6.QtCore import Qt
 
         self._dl = self._DownloadThread(url, dest, headers)
         dlg = QProgressDialog(f"Downloading {base_name}…", "Cancel", 0, 100, self)
@@ -766,17 +770,21 @@ class MainWindow(QMainWindow):
             if not app_path:
                 return
 
-        # Download the file to temp and open with specified app
+        # Ask user where to save the file before opening with external app
         base_name = os.path.basename(path).lstrip('/')
         if not base_name:
             base_name = "file"
-        dest = os.path.join(tempfile.gettempdir(), f"stremer_{uuid.uuid4().hex}_{base_name}")
+        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
+        from PyQt6.QtCore import Qt
+
+        suggested = os.path.join(os.path.expanduser("~"), "Downloads", base_name)
+        dest, _ = QFileDialog.getSaveFileName(self, f"Save {base_name} as", suggested)
+        if not dest:
+            return
+
         url = self.api_client.stream_url(path)
         # Don't add Authorization header since token is already in URL
         headers = {}
-
-        from PyQt6.QtWidgets import QProgressDialog
-        from PyQt6.QtCore import Qt
 
         self._dl = self._DownloadThread(url, dest, headers)
         dlg = QProgressDialog(f"Downloading {base_name}…", "Cancel", 0, 100, self)
