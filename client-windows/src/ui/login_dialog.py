@@ -48,13 +48,18 @@ class LoginDialog(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Connect to Android Server")
+        # Wider dialog so fields and scan results are fully visible
+        try:
+            self.setMinimumWidth(320)
+        except Exception:
+            pass
         layout = QVBoxLayout(self)
 
         # Host input + scan button
         host_row = QHBoxLayout()
         self.host_input = QLineEdit()
         self.host_input.setPlaceholderText("http://192.168.0.0:8080")
-        self.host_input.setText("")
+        self.host_input.setText(f"http://192.168.{0}.{0}:8080")
         self.scan_btn = QPushButton("Scan LAN")
         host_row.addWidget(self.host_input)
         host_row.addWidget(self.scan_btn)

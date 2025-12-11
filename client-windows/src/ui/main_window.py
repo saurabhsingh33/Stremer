@@ -66,9 +66,21 @@ class MainWindow(QMainWindow):
         self.view_combo.currentTextChanged.connect(self._on_view_change)
         toolbar.addWidget(self.view_combo)
 
+        # Central container: start screen + splitter
+        from PyQt6.QtWidgets import QWidget, QStackedLayout, QLabel
+        self.container = QWidget()
+        self._central_layout = QVBoxLayout(self.container)
+
+        # Start / welcome screen shown when not connected
+        self.start_widget = QLabel()
+        self.start_widget.setText("\n\nWelcome to Stremer\n\nClick Login to connect to a server.")
+        self.start_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._central_layout.addWidget(self.start_widget)
+
         # Central splitter: browser left, details right
         self.splitter = QSplitter(self)
-        self.setCentralWidget(self.splitter)
+        self._central_layout.addWidget(self.splitter)
+        self.setCentralWidget(self.container)
 
         # Browser (initialize without API client; will be set after login)
         self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with, on_upload=self._upload)
@@ -101,6 +113,11 @@ class MainWindow(QMainWindow):
             self._try_restore_session()
         except Exception:
             pass
+        # If not connected, show start screen; otherwise show splitter
+        if not self.api_client:
+            self._show_start_screen()
+        else:
+            self._show_main_view()
 
     def _api(self):
         if not self.api_client:
@@ -114,9 +131,17 @@ class MainWindow(QMainWindow):
             self.api_client = None
             self.browser.set_api_client(None)
             self.browser.load_path("/")
+            # Clear details panel
+            try:
+                self.details.set_api_client(None)
+                self.details.clear()
+            except Exception:
+                pass
             self.statusBar().showMessage("Not connected")
             self.login_action.setText("Login")
             self._clear_saved_session()
+            # Show friendly start screen instead of browsing stale files
+            self._show_start_screen()
         else:
             # Show login dialog
             dlg = LoginDialog()
@@ -189,6 +214,8 @@ class MainWindow(QMainWindow):
                 print(f"ERROR loading root path: {load_err}")
                 import traceback
                 traceback.print_exc()
+            # Hide start screen and show main view
+            self._show_main_view()
             # Persist only if we have a token (anonymous auth mode)
             if token_dbg:
                 print("DEBUG: About to save session (anonymous auth)")
@@ -234,6 +261,11 @@ class MainWindow(QMainWindow):
                 print(f"Error loading root path: {load_err}")
                 import traceback
                 traceback.print_exc()
+            # Show main view now that login succeeded
+            try:
+                self._show_main_view()
+            except Exception:
+                pass
             # Persist session for 30 days, if requested
             try:
                 if getattr(dlg, 'remember_check', None) is None or dlg.remember_check.isChecked():
@@ -256,6 +288,20 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Refresh failed: {e}")
         else:
             QMessageBox.information(self, "Not connected", "Login first.")
+
+    def _show_start_screen(self):
+        try:
+            self.start_widget.show()
+            self.splitter.hide()
+        except Exception:
+            pass
+
+    def _show_main_view(self):
+        try:
+            self.start_widget.hide()
+            self.splitter.show()
+        except Exception:
+            pass
 
     def _on_image_saved(self, saved_path: str):
         """Called when an image is saved from the image viewer."""
@@ -821,6 +867,11 @@ class MainWindow(QMainWindow):
             self.browser.load_path("/")
             self.statusBar().showMessage(f"Connected to {base}")
             self.login_action.setText("Logout")
+            # Show main view now that we're connected
+            try:
+                self._show_main_view()
+            except Exception:
+                pass
         except Exception:
             self.api_client = None
             self.browser.set_api_client(None)
@@ -833,6 +884,11 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def dropEvent(self, event: QDropEvent):
+        # Show main view after restoring session
+        try:
+            self._show_main_view()
+        except Exception:
+                pass
         """Handle dropped files/folders."""
         if not self.api_client:
             QMessageBox.warning(self, "Not connected", "Please login to upload files.")

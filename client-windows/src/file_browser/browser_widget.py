@@ -128,6 +128,7 @@ class BrowserWidget(QWidget):
         if not self.api_client:
             # No API client yet; clear view
             self.table.setRowCount(0)
+            self.icon_list.clear()
             self.path_changed.emit(self.current_path)
             self.selection_cleared.emit()
             return
