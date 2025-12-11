@@ -47,7 +47,7 @@ object Server {
             install(Authentication) {
                 bearer("auth-bearer") {
                     authenticate { tokenCredential ->
-                        // If auth disabled, allow any request
+                        // If auth disabled , allow any request
                         if (!com.stremer.auth.AuthManager.isEnabled()) {
                             UserIdPrincipal("anon")
                         } else if (tokenCredential.token == ServiceLocator.token) {
@@ -57,6 +57,10 @@ object Server {
                 }
             }
             routing {
+                // Lightweight unauthenticated ping for LAN discovery
+                get("/ping") {
+                    call.respond(mapOf("server" to "stremer", "status" to "ok"))
+                }
                 // login issues token (stored in ServiceLocator)
                 post("/auth/login") {
                     val params = call.receiveParameters()
