@@ -290,17 +290,51 @@ object Server {
                             // Generate Bitmap
                             val bitmap: android.graphics.Bitmap? = try {
                                 if (isVideo) {
+                                    // Try a single, best-effort frame extraction. If it fails, generate a simple
+                                    // generic video icon so thumbnails are visible for unsupported containers.
                                     val retriever = android.media.MediaMetadataRetriever()
-                                    val ctx = ServiceLocator.context()
-                                    if (ctx != null) {
-                                        retriever.setDataSource(ctx, uri)
-                                    } else {
-                                        retriever.setDataSource(uri.toString(), java.util.HashMap())
+                                    var frame: android.graphics.Bitmap? = null
+                                    try {
+                                        val ctx = ServiceLocator.context()
+                                        if (ctx != null) {
+                                            retriever.setDataSource(ctx, uri)
+                                        } else {
+                                            retriever.setDataSource(uri.toString(), java.util.HashMap())
+                                        }
+                                        frame = try {
+                                            retriever.getFrameAtTime(-1, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    } catch (e: Exception) {
+                                        android.util.Log.w("Server", "MediaMetadataRetriever setDataSource failed for $path: ${e.message}")
+                                    } finally {
+                                        try { retriever.release() } catch (_: Exception) {}
                                     }
-                                    // Use closest sync frame to avoid NULL on exact 0
-                                    val frame = retriever.getFrameAtTime(-1, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                                    retriever.release()
-                                    frame
+
+                                    if (frame != null) {
+                                        frame
+                                    } else {
+                                        // Create a simple video icon (dark background + white play triangle)
+                                        val iconBitmap = android.graphics.Bitmap.createBitmap(maxW.coerceAtLeast(1), maxH.coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+                                        val canvas = android.graphics.Canvas(iconBitmap)
+                                        canvas.drawColor(android.graphics.Color.parseColor("#1a1a1a"))
+                                        val paint = android.graphics.Paint().apply {
+                                            color = android.graphics.Color.WHITE
+                                            style = android.graphics.Paint.Style.FILL
+                                            isAntiAlias = true
+                                        }
+                                        val cx = iconBitmap.width / 2f
+                                        val cy = iconBitmap.height / 2f
+                                        val s = (minOf(iconBitmap.width, iconBitmap.height) * 0.28f)
+                                        val pathP = android.graphics.Path()
+                                        pathP.moveTo(cx - s/2f, cy - s)
+                                        pathP.lineTo(cx - s/2f, cy + s)
+                                        pathP.lineTo(cx + s, cy)
+                                        pathP.close()
+                                        canvas.drawPath(pathP, paint)
+                                        iconBitmap
+                                    }
                                 } else if (isImage) {
                                     // Downsample large images to near requested size to avoid OOM and binder slowness
                                     val fd = ServiceLocator.openInputStream(path.trim('/'))
