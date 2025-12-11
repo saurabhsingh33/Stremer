@@ -288,7 +288,7 @@ object Server {
                             val isImage = lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".gif") || lower.endsWith(".bmp") || lower.endsWith(".webp")
 
                             // Generate Bitmap
-                            val bitmap: android.graphics.Bitmap? = try {
+                            var bitmap: android.graphics.Bitmap? = try {
                                 if (isVideo) {
                                     // Try a single, best-effort frame extraction. If it fails, generate a simple
                                     // generic video icon so thumbnails are visible for unsupported containers.
@@ -374,9 +374,80 @@ object Server {
                             }
 
                             if (bitmap == null) {
-                                // Return empty response so clients can skip drawing a thumb instead of erroring
-                                call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "public, max-age=300")
-                                return@get call.respond(HttpStatusCode.NoContent)
+                                // No bitmap could be extracted. Generate a simple file-type icon so
+                                // clients always have a visible thumbnail. Use a short uppercase
+                                // label (PDF, TXT, MP3, PY, JS, DOC, XLS, etc.) on a colored
+                                // background chosen per file type.
+                                val ext = lower.substringAfterLast('.', "")
+                                val label = when (ext) {
+                                    "pdf" -> "PDF"
+                                    "txt" -> "TXT"
+                                    "md" -> "MD"
+                                    "mp3" -> "MP3"
+                                    "wav" -> "AUD"
+                                    "flac" -> "AUD"
+                                    "exe" -> "EXE"
+                                    "json" -> "JSON"
+                                    "py" -> "PY"
+                                    "yaml", "yml" -> "YML"
+                                    "js" -> "JS"
+                                    "ts" -> "TS"
+                                    "doc", "docx" -> "DOC"
+                                    "xls", "xlsx" -> "XLS"
+                                    "ppt", "pptx" -> "PPT"
+                                    "apk" -> "APK"
+                                    "zip", "rar", "7z" -> "ZIP"
+                                    else -> if (isVideo) "VID" else ext.uppercase().takeIf { it.isNotEmpty() } ?: "FILE"
+                                }
+
+                                val colorHex = when (label) {
+                                    "PDF" -> "#D32F2F"
+                                    "TXT", "MD" -> "#757575"
+                                    "MP3", "AUD" -> "#FB8C00"
+                                    "EXE", "APK" -> "#303F9F"
+                                    "JSON", "PY", "YML", "JS", "TS" -> "#388E3C"
+                                    "DOC" -> "#1976D2"
+                                    "XLS" -> "#2E7D32"
+                                    "PPT" -> "#E64A19"
+                                    "ZIP" -> "#6D4C41"
+                                    "VID" -> "#424242"
+                                    else -> "#455A64"
+                                }
+
+                                // Create bitmap sized to requested max dimensions
+                                val w = maxW.coerceAtLeast(1)
+                                val h = maxH.coerceAtLeast(1)
+                                val iconBitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+                                val canvas = android.graphics.Canvas(iconBitmap)
+                                val bgColor = try { android.graphics.Color.parseColor(colorHex) } catch (_: Exception) { android.graphics.Color.DKGRAY }
+                                canvas.drawColor(bgColor)
+
+                                val paint = android.graphics.Paint().apply {
+                                    isAntiAlias = true
+                                    style = android.graphics.Paint.Style.FILL
+                                    color = android.graphics.Color.WHITE
+                                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                                }
+
+                                // Choose text color based on background luminance
+                                val r = android.graphics.Color.red(bgColor) / 255.0
+                                val g = android.graphics.Color.green(bgColor) / 255.0
+                                val b = android.graphics.Color.blue(bgColor) / 255.0
+                                val lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                                if (lum > 0.7) paint.color = android.graphics.Color.BLACK else paint.color = android.graphics.Color.WHITE
+
+                                // Text size ~35% of smaller dimension
+                                val ts = (minOf(w, h) * 0.35f)
+                                paint.textSize = ts
+                                paint.textAlign = android.graphics.Paint.Align.CENTER
+
+                                val cx = w / 2f
+                                val cy = h / 2f
+                                val textY = cy - (paint.descent() + paint.ascent()) / 2f
+                                canvas.drawText(label, cx, textY, paint)
+
+                                // Use this generated icon as the bitmap
+                                bitmap = iconBitmap
                             }
 
                             // Scale down preserving aspect ratio

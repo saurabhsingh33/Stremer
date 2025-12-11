@@ -172,11 +172,11 @@ class BrowserWidget(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
                 self.icon_list.addItem(item)
 
-                # If thumbnails mode and file is image/video, try loading thumbnail
+                # If thumbnails view and item is a file, request a thumbnail from server
+                # Request thumbnails for all file types so server-generated fallback
+                # icons (PDF, TXT, DOC, ZIP, etc.) are displayed.
                 if self.view_mode == "thumbnails" and type_ == "file":
-                    lower = name.lower()
-                    if lower.endswith((".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".webm")):
-                        self._load_thumbnail_async(item, path_full)
+                    self._load_thumbnail_async(item, path_full)
         # Notify listeners that path changed
         self.path_changed.emit(self.current_path)
         self.selection_cleared.emit()
