@@ -662,6 +662,11 @@ class MainWindow(QMainWindow):
                     except Exception as e:
                         # If cancellation triggered the exception, finish gracefully
                         if getattr(self, 'canceled', False) and str(e) == 'Canceled':
+                            # Delete the partially uploaded file from the server
+                            try:
+                                self.api_client.delete_file(remote_path)
+                            except Exception as del_err:
+                                print(f"Could not delete partial file {remote_path}: {del_err}")
                             # Emit done with current progress so UI treats it as canceled
                             self.done.emit(uploaded_count, uploaded_bytes)
                             return
