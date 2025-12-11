@@ -17,6 +17,67 @@ import time
 from pathlib import Path
 
 
+class _LoginThread(QThread):
+    """Background thread for performing login/connection without blocking UI."""
+    success = pyqtSignal(object, str, str)  # (client, base_url, user_or_anon)
+    error = pyqtSignal(str, str)  # (error_msg, friendly_msg)
+
+    def __init__(self, base: str, user: str = None, pwd: str = None, parent=None):
+        super().__init__(parent)
+        self.base = base
+        self.user = user
+        self.pwd = pwd
+        self.is_login_mode = user is not None
+
+    def run(self):
+        try:
+            client = APIClient(self.base)
+            if self.is_login_mode:
+                # Credential login
+                from api.auth import AuthClient
+                auth = AuthClient(self.base)
+                token = auth.login(self.user, self.pwd)
+                if not token:
+                    self.error.emit("Invalid credentials", "Invalid username or password.")
+                    return
+                client.set_token(token)
+                self.success.emit(client, self.base, self.user)
+            else:
+                # No-auth mode: probe first
+                try:
+                    items = client.list_files("/")
+                    _ = len(items)
+                    # Success with no auth
+                    self.success.emit(client, self.base, None)
+                except Exception as probe_err:
+                    import requests as _req
+                    status = getattr(getattr(probe_err, 'response', None), 'status_code', None)
+                    if isinstance(probe_err, _req.exceptions.HTTPError) and status == 401:
+                        # Try anonymous login fallback
+                        try:
+                            from api.auth import AuthClient
+                            auth = AuthClient(self.base)
+                            token = auth.login("anonymous", "anonymous")
+                            if not token:
+                                raise RuntimeError("Anonymous login failed")
+                            client.set_token(token)
+                            self.success.emit(client, self.base, "anonymous")
+                        except Exception as anon_err:
+                            raise anon_err
+                    else:
+                        raise probe_err
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "connection" in error_msg or "timeout" in error_msg or "max retries" in error_msg:
+                friendly = (f"Cannot connect to server at {self.base}.\n\nPlease check:\n"
+                          "• Server URL is correct\n• Server is running\n• Network connection is available")
+            elif "invalid" in error_msg or "unauthorized" in error_msg:
+                friendly = "Invalid username or password."
+            else:
+                friendly = f"Failed to connect: {e}"
+            self.error.emit(str(e), friendly)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -25,6 +86,7 @@ class MainWindow(QMainWindow):
 
         self.api_client: APIClient | None = None
         self._open_image_views: list[ImageViewer] = []
+        self._current_login_thread: QThread | None = None
 
         # Enable drag and drop
         self.setAcceptDrops(True)
@@ -162,73 +224,60 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing info", "Please enter server URL.")
             return
 
-        client = APIClient(base)
-        try:
-            # Probe files endpoint WITHOUT any token; if server has auth disabled,
-            # this should succeed. No server changes required.
-            try:
-                items = client.list_files("/")
-                _ = len(items)  # touch to ensure JSON parsed
-                print("DEBUG(no-auth): list_files('/') succeeded without token")
-                no_auth_mode = True
-            except Exception as probe_err:
-                # If it's a 401, try anonymous login fallback
-                import requests as _req
-                status = getattr(getattr(probe_err, 'response', None), 'status_code', None)
-                print(f"DEBUG(no-auth): probe failed, status={status}, err={probe_err}")
-                if isinstance(probe_err, _req.exceptions.HTTPError) and status == 401:
-                    try:
-                        from api.auth import AuthClient
-                        auth = AuthClient(base)
-                        token = auth.login("anonymous", "anonymous")
-                        if not token:
-                            raise RuntimeError("Server requires authentication and anonymous login failed")
-                        client.set_token(token)
-                        print("DEBUG(no-auth): Anonymous login succeeded, token acquired")
-                        # Verify with token
-                        items = client.list_files("/")
-                        _ = len(items)
-                        no_auth_mode = False
-                    except Exception as anon_err:
-                        print(f"DEBUG(no-auth): anonymous login fallback failed: {anon_err}")
-                        raise
-                else:
-                    # Not a 401 or different failure
-                    raise
+        # Show progress dialog while connecting
+        progress = QProgressDialog("Connecting...", None, 0, 0, dlg)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
 
-            # Wire up client everywhere
+        # Run connection in background thread to keep UI responsive
+        login_thread = _LoginThread(base)
+        # Keep thread reference so it doesn't get garbage collected
+        self._current_login_thread = login_thread
+
+        def on_success(client, url, user_label):
+            progress.close()
             self.api_client = client
-            token_dbg = client.token if getattr(client, 'token', None) else None
-            print(f"DEBUG: Set api_client with token: {token_dbg}")
             self.browser.set_api_client(client)
-            print("DEBUG: Set browser api_client")
             self.details.set_api_client(client)
-            print("DEBUG: Set details api_client")
-            self.statusBar().showMessage(f"Connected to {base} ({'auth disabled' if token_dbg is None else 'anonymous auth'})")
+            token = client.token if getattr(client, 'token', None) else None
+            auth_mode = 'auth disabled' if token is None else 'anonymous auth'
+            self.statusBar().showMessage(f"Connected to {url} ({auth_mode})")
             self.login_action.setText("Logout")
-            print("DEBUG: About to load browser path")
             try:
                 self.browser.load_path("/")
-                print("DEBUG: Browser path loaded successfully")
             except Exception as load_err:
-                print(f"ERROR loading root path: {load_err}")
-                import traceback
-                traceback.print_exc()
-            # Hide start screen and show main view
-            self._show_main_view()
-            # Persist only if we have a token (anonymous auth mode)
-            if token_dbg:
-                print("DEBUG: About to save session (anonymous auth)")
-                self._save_session(base, token_dbg, "anonymous")
-            print("DEBUG: About to accept dialog (no-auth/anon mode)")
+                print(f"Error loading root path: {load_err}")
+            try:
+                self._show_main_view()
+            except Exception:
+                pass
+            # Persist only if we have a token
+            try:
+                if token:
+                    self._save_session(url, token, "anonymous")
+            except Exception:
+                pass
             dlg.accept()
-            print("DEBUG: Dialog accepted")
-        except Exception as e:
-            import traceback
-            print(f"ERROR in _try_connect_without_auth: {e}")
-            traceback.print_exc()
-            QMessageBox.critical(self, "Connection failed",
-                               f"Could not connect without authentication: {e}\n\nPlease try with credentials.")
+            # Clean up thread reference
+            try:
+                login_thread.wait(1000)
+            except Exception:
+                pass
+            self._current_login_thread = None
+
+        def on_error(error_raw, friendly_msg):
+            progress.close()
+            QMessageBox.critical(self, "Connection Error", friendly_msg)
+            # Clean up thread reference
+            try:
+                login_thread.wait(1000)
+            except Exception:
+                pass
+            self._current_login_thread = None
+
+        login_thread.success.connect(on_success)
+        login_thread.error.connect(on_error)
+        login_thread.start()
 
     def _do_login(self, dlg: LoginDialog):
         base = dlg.host_input.text().strip()
@@ -240,45 +289,62 @@ class MainWindow(QMainWindow):
         if not user or not pwd:
             QMessageBox.warning(self, "Missing info", "Please fill username and password.")
             return
-        client = APIClient(base)
-        try:
-            from api.auth import AuthClient
-            auth = AuthClient(base)
-            token = auth.login(user, pwd)
-            if not token:
-                QMessageBox.critical(self, "Login failed", "Invalid credentials.")
-                return
-            client.set_token(token)
+
+        # Show progress dialog while connecting
+        progress = QProgressDialog("Connecting...", None, 0, 0, dlg)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+
+        # Run login in background thread to keep UI responsive
+        login_thread = _LoginThread(base, user=user, pwd=pwd)
+        # Keep thread reference so it doesn't get garbage collected
+        self._current_login_thread = login_thread
+
+        def on_success(client, url, user_label):
+            progress.close()
             self.api_client = client
-            # Provide API client to browser now that we're authenticated
             self.browser.set_api_client(client)
             self.details.set_api_client(client)
-            self.statusBar().showMessage(f"Connected to {base}")
+            self.statusBar().showMessage(f"Connected to {url}")
             self.login_action.setText("Logout")
             try:
                 self.browser.load_path("/")
             except Exception as load_err:
                 print(f"Error loading root path: {load_err}")
-                import traceback
-                traceback.print_exc()
-            # Show main view now that login succeeded
             try:
                 self._show_main_view()
             except Exception:
                 pass
             # Persist session for 30 days, if requested
             try:
-                if getattr(dlg, 'remember_check', None) is None or dlg.remember_check.isChecked():
-                    self._save_session(base, token, user)
+                token = client.token if getattr(client, 'token', None) else None
+                if token and (getattr(dlg, 'remember_check', None) is None or dlg.remember_check.isChecked()):
+                    self._save_session(url, token, user_label)
                 else:
                     self._clear_saved_session()
             except Exception:
                 pass
             dlg.accept()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to connect: {e}\n\n{traceback.format_exc()}")
+            # Clean up thread reference
+            try:
+                login_thread.wait(1000)  # Wait up to 1 second for thread to finish
+            except Exception:
+                pass
+            self._current_login_thread = None
+
+        def on_error(error_raw, friendly_msg):
+            progress.close()
+            QMessageBox.critical(self, "Connection Error", friendly_msg)
+            # Clean up thread reference
+            try:
+                login_thread.wait(1000)
+            except Exception:
+                pass
+            self._current_login_thread = None
+
+        login_thread.success.connect(on_success)
+        login_thread.error.connect(on_error)
+        login_thread.start()
 
     def _refresh(self):
         if self.api_client:
