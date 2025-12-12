@@ -11,14 +11,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QRectF, Qt, QTimer
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor
-import vlc
-import requests
+import json
 import math
+import os
 import random
 import struct
 import subprocess
 import threading
 import shutil
+from pathlib import Path
+import requests
+import vlc
 
 
 class VisualizerWidget(QWidget):
@@ -64,6 +67,11 @@ class MusicPlayer(QDialog):
         self._visualizer_proc = None
         self._ffmpeg_path = shutil.which("ffmpeg")
         self._visualizer_prev_levels = [0.0] * 16
+        self._settings = self._load_settings()
+        self._settings_timer = QTimer(self)
+        self._settings_timer.setSingleShot(True)
+        self._settings_timer.setInterval(500)
+        self._settings_timer.timeout.connect(self._persist_settings)
 
         # Repeat modes: "no_repeat", "repeat_one", "repeat_all"
         self.repeat_mode = "no_repeat"
@@ -82,6 +90,7 @@ class MusicPlayer(QDialog):
         self.update_timer.setInterval(100)  # Update every 100ms
 
         self._setup_ui()
+        self._apply_saved_geometry()
         self._load_audio()
 
     def _setup_ui(self):
@@ -182,11 +191,15 @@ class MusicPlayer(QDialog):
         volume_icon = QLabel("🔊")
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(50)
         self.volume_slider.setMaximumWidth(100)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        # Set initial volume for VLC (0-100 range)
-        self.player.audio_set_volume(50)
+        saved_volume = None
+        if isinstance(self._settings, dict):
+            saved_volume = self._settings.get("volume")
+        if not isinstance(saved_volume, int):
+            saved_volume = 50
+        saved_volume = max(0, min(100, saved_volume))
+        self.volume_slider.setValue(saved_volume)
 
         # Repeat mode button
         self.repeat_button = QPushButton("Repeat: Off")
@@ -334,6 +347,7 @@ class MusicPlayer(QDialog):
 
     def _on_volume_changed(self, value):
         self.player.audio_set_volume(value)
+        self._queue_settings_save()
 
     def _on_slider_pressed(self):
         self.is_seeking = True
@@ -431,6 +445,72 @@ class MusicPlayer(QDialog):
         self._visualizer_thread = None
         self._visualizer_proc = None
         self._visualizer_prev_levels = [0.0] * self.visualizer.bars
+
+    def _settings_file(self) -> Path:
+        appdata = os.getenv('APPDATA')
+        if appdata:
+            base = Path(appdata) / 'Stremer'
+        else:
+            base = Path.home() / '.stremer'
+        base.mkdir(parents=True, exist_ok=True)
+        return base / 'player_settings.json'
+
+    def _load_settings(self) -> dict:
+        try:
+            text = self._settings_file().read_text()
+            data = json.loads(text)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return {}
+
+    def _persist_settings(self):
+        if not hasattr(self, 'volume_slider'):
+            return
+        data = {
+            'volume': self.volume_slider.value(),
+            'geometry': {
+                'x': self.x(),
+                'y': self.y(),
+                'width': self.width(),
+                'height': self.height(),
+            }
+        }
+        try:
+            self._settings_file().write_text(json.dumps(data))
+        except Exception:
+            pass
+
+    def _queue_settings_save(self):
+        if self._settings_timer.isActive():
+            self._settings_timer.stop()
+        self._settings_timer.start()
+
+    def _apply_saved_geometry(self):
+        geometry = self._settings.get('geometry') if isinstance(self._settings, dict) else None
+        if not isinstance(geometry, dict):
+            return
+        try:
+            width = geometry.get('width')
+            height = geometry.get('height')
+            if isinstance(width, int) and width > 0 and isinstance(height, int) and height > 0:
+                self.resize(width, height)
+            x = geometry.get('x')
+            y = geometry.get('y')
+            if isinstance(x, int) and isinstance(y, int):
+                self.move(x, y)
+        except Exception:
+            pass
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._queue_settings_save()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._queue_settings_save()
+
     def _toggle_repeat_mode(self):
         """Cycle through repeat modes"""
         if self.repeat_mode == "no_repeat":
@@ -527,4 +607,6 @@ class MusicPlayer(QDialog):
         self.player.stop()
         self.player.release()
         self._stop_visualizer_analyzer()
+        self._settings_timer.stop()
+        self._persist_settings()
         super().closeEvent(event)
