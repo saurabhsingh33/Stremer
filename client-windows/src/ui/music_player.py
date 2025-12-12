@@ -1,10 +1,51 @@
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel, QStyle, QListWidget
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QSlider,
+    QLabel,
+    QStyle,
+    QListWidget,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush
+from PyQt6.QtCore import QRectF, Qt, QTimer
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor
 import vlc
 import requests
+import math
+import random
+import struct
+import subprocess
+import threading
+import shutil
+
+
+class VisualizerWidget(QWidget):
+    def __init__(self, bars: int = 16, parent=None):
+        super().__init__(parent)
+        self.bars = bars
+        self.levels = [0.0] * bars
+        self.setMinimumHeight(40)
+
+    def set_levels(self, levels: list[float]):
+        self.levels = [max(0.0, min(1.0, lv)) for lv in levels[: self.bars]]
+        if len(self.levels) < self.bars:
+            self.levels += [0.0] * (self.bars - len(self.levels))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bar_width = max(4, self.width() / max(1, self.bars))
+        for idx, level in enumerate(self.levels):
+            height = level * self.height()
+            x = idx * bar_width
+            y = self.height() - height
+            rect = QRectF(x + 2, y, bar_width - 4, height)
+            color = QColor.fromHsv(180 + int(level * 60), 220, 230)
+            painter.fillRect(rect, color)
+        painter.end()
 
 
 class MusicPlayer(QDialog):
@@ -17,6 +58,12 @@ class MusicPlayer(QDialog):
 
         self.is_seeking = False
         self.is_playing = False
+        self._last_visualizer_time = 0
+        self._visualizer_thread = None
+        self._visualizer_stop = threading.Event()
+        self._visualizer_proc = None
+        self._ffmpeg_path = shutil.which("ffmpeg")
+        self._visualizer_prev_levels = [0.0] * 16
 
         # Repeat modes: "no_repeat", "repeat_one", "repeat_all"
         self.repeat_mode = "no_repeat"
@@ -62,6 +109,10 @@ class MusicPlayer(QDialog):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.status_label.setStyleSheet("padding: 0 4px 4px 4px; color: #ccc;")
         text_col.addWidget(self.status_label)
+
+        self.visualizer = VisualizerWidget()
+        self.visualizer.setMaximumHeight(50)
+        text_col.addWidget(self.visualizer)
 
         # Spacer to push text to top if art is taller
         text_col.addStretch()
@@ -197,6 +248,9 @@ class MusicPlayer(QDialog):
             # Try to fetch album art shortly after loading
             QTimer.singleShot(600, self._load_album_art)
 
+            # Launch real analyzer if available
+            self._start_visualizer_analyzer(current['url'])
+
             # Auto-play after loading
             QTimer.singleShot(500, self._play)
         except Exception as e:
@@ -231,6 +285,8 @@ class MusicPlayer(QDialog):
         self.position_label.setText("0:00")
         self.play_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.status_label.setText("Stopped")
+        self.visualizer.set_levels([0] * self.visualizer.bars)
+        self._stop_visualizer_analyzer()
 
     def _update_position(self):
         """Update position from VLC player"""
@@ -248,6 +304,9 @@ class MusicPlayer(QDialog):
         if length > 0 and self.seek_slider.maximum() != length:
             self.seek_slider.setRange(0, length)
             self.duration_label.setText(self._format_time(length))
+
+        # Update visualizer
+        self._refresh_visualizer(position, length)
 
         # Auto-advance to next track when current track ends
         if length > 0 and position >= length - 200 and self.is_playing:
@@ -286,6 +345,92 @@ class MusicPlayer(QDialog):
     def _on_slider_moved(self, position):
         self.position_label.setText(self._format_time(position))
 
+    def _refresh_visualizer(self, position: int, length: int):
+        if not self.is_playing or length <= 0:
+            self.visualizer.set_levels([0] * self.visualizer.bars)
+            return
+        delta = max(1, position - self._last_visualizer_time)
+        self._last_visualizer_time = position
+        if self._visualizer_thread and self._visualizer_thread.is_alive():
+            return  # analyzer thread controls levels once running
+        # fallback animation using volume/time when analyzer unavailable
+        energy = min(1.0, (delta / 500.0) + 0.2)
+        levels = []
+        volume = max(0.1, min(1.0, self.player.audio_get_volume() / 100.0))
+        for idx in range(self.visualizer.bars):
+            base = energy * ((idx + 1) / self.visualizer.bars)
+            ripple = 0.15 * random.random()
+            scale = (base + ripple) * (0.5 + 0.5 * volume)
+            levels.append(min(1.0, max(0.05, scale)))
+        self.visualizer.set_levels(levels)
+
+    def _start_visualizer_analyzer(self, url: str):
+        self._stop_visualizer_analyzer()
+        if not self._ffmpeg_path:
+            return
+        args = [
+            self._ffmpeg_path,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            url,
+            "-f",
+            "f32le",
+            "-ac",
+            "1",
+            "-" ,
+        ]
+        try:
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except Exception:
+            return
+        stop_event = threading.Event()
+        self._visualizer_proc = proc
+        self._visualizer_stop = stop_event
+        def worker():
+            chunk_bytes = 4096 * 4
+            while not stop_event.is_set():
+                data = proc.stdout.read(chunk_bytes)
+                if not data:
+                    break
+                num_vals = len(data) // 4
+                if num_vals == 0:
+                    continue
+                values = struct.unpack("<%df" % num_vals, data)
+                bands = [0.0] * self.visualizer.bars
+                counts = [0] * self.visualizer.bars
+                for idx, value in enumerate(values):
+                    band_idx = min(self.visualizer.bars - 1, int(idx / num_vals * self.visualizer.bars))
+                    bands[band_idx] += value * value
+                    counts[band_idx] += 1
+                levels = []
+                for idx in range(self.visualizer.bars):
+                    avg = bands[idx] / max(1, counts[idx])
+                    freq_weight = 1.2 - (idx / self.visualizer.bars) * 0.7
+                    level = min(1.0, math.sqrt(avg) * 25 * freq_weight)
+                    smooth = self._visualizer_prev_levels[idx] * 0.65 + level * 0.35
+                    self._visualizer_prev_levels[idx] = smooth
+                    levels.append(smooth)
+                QTimer.singleShot(0, lambda lv=list(levels): self.visualizer.set_levels(lv))
+            proc.stdout.close()
+            proc.wait()
+        thread = threading.Thread(target=worker, daemon=True)
+        self._visualizer_thread = thread
+        thread.start()
+
+    def _stop_visualizer_analyzer(self):
+        if self._visualizer_thread and self._visualizer_thread.is_alive():
+            self._visualizer_stop.set()
+            if self._visualizer_proc:
+                try:
+                    self._visualizer_proc.terminate()
+                except Exception:
+                    pass
+            self._visualizer_thread.join(timeout=0.1)
+        self._visualizer_thread = None
+        self._visualizer_proc = None
+        self._visualizer_prev_levels = [0.0] * self.visualizer.bars
     def _toggle_repeat_mode(self):
         """Cycle through repeat modes"""
         if self.repeat_mode == "no_repeat":
@@ -381,4 +526,5 @@ class MusicPlayer(QDialog):
         self.update_timer.stop()
         self.player.stop()
         self.player.release()
+        self._stop_visualizer_analyzer()
         super().closeEvent(event)
