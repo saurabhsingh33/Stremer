@@ -39,6 +39,9 @@ fun MainScreen() {
     // Track root folder names for multi-folder display
     var rootFolders by remember { mutableStateOf(ServiceLocator.getRootNames()) }
 
+    // Observe recent client logins (username + IP)
+    val clients by Server.clients.collectAsState(initial = emptyList())
+
     // Update root folders list when storage changes
     LaunchedEffect(storageSelected) {
         rootFolders = ServiceLocator.getRootNames()
@@ -168,6 +171,43 @@ fun MainScreen() {
                     Text(text = "Connect to: ${Server.getServerUrl()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
                 } else {
                     Text(text = "Start the server to obtain the LAN address", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(text = "Recent logins", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onBackground)
+                Spacer(modifier = Modifier.height(6.dp))
+                if (clients.isEmpty()) {
+                    Text(
+                        text = "No clients have logged in yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f)
+                    )
+                } else {
+                    clients.take(5).forEach { client ->
+                        val timeStr = remember(client.lastSeen) {
+                            android.text.format.DateFormat.format("HH:mm:ss", java.util.Date(client.lastSeen)).toString()
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "👤 ${client.username}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground)
+                                Text(text = "IP: ${client.ip}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
+                            }
+                            Text(text = timeStr, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
+                        }
+                    }
+                    if (clients.size > 5) {
+                        Text(
+                            text = "+${clients.size - 5} more",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
         }

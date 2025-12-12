@@ -23,6 +23,26 @@ object Server {
     // Expose active client count as a StateFlow so UI/services can observe it in real time
     private val _clientCount = MutableStateFlow(0)
     val clientCount: StateFlow<Int> = _clientCount
+    data class ClientInfo(val username: String, val ip: String, val lastSeen: Long)
+    private val _clients = MutableStateFlow<List<ClientInfo>>(emptyList())
+    val clients: StateFlow<List<ClientInfo>> = _clients
+    private val clientLock = Any()
+
+    private fun recordClient(username: String?, ip: String) {
+        val name = (username ?: "unknown").ifBlank { "unknown" }
+        val now = System.currentTimeMillis()
+        synchronized(clientLock) {
+            val mutable = _clients.value.toMutableList()
+            val idx = mutable.indexOfFirst { it.ip == ip || it.username == name }
+            val info = ClientInfo(name, ip, now)
+            if (idx >= 0) {
+                mutable[idx] = info
+            } else {
+                mutable.add(info)
+            }
+            _clients.value = mutable
+        }
+    }
 
     fun start(port: Int = 8080) {
         currentPort = port
@@ -69,6 +89,13 @@ object Server {
                     // If auth disabled, issue token regardless (or a fixed token)
                     if (!com.stremer.auth.AuthManager.isEnabled() || ServiceLocator.validate(user, pass)) {
                         ServiceLocator.issueTokenFor(user ?: "user")
+                        // Track client login with username and IP
+                        val ip = try {
+                            call.request.headers[io.ktor.http.HttpHeaders.XForwardedFor]
+                                ?.split(',')?.firstOrNull()?.trim()
+                                ?: call.request.local.remoteHost
+                        } catch (_: Exception) { "unknown" }
+                        recordClient(user, ip)
                         call.respond(mapOf("token" to ServiceLocator.token))
                     } else {
                         call.respondText("Invalid credentials", status = HttpStatusCode.Unauthorized)
