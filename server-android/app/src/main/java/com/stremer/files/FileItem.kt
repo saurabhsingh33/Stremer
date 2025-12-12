@@ -6,5 +6,7 @@ import kotlinx.serialization.Serializable
 data class FileItem(
     val name: String,
     val type: String, // "file" or "dir"
-    val size: Long? = null
+    val size: Long? = null,
+    val lastModified: Long? = null,
+    val path: String? = null
 )

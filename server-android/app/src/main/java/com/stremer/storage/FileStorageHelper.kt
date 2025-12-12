@@ -59,7 +59,9 @@ class FileStorageHelper(private val activity: Activity) {
                     com.stremer.files.FileItem(
                         name = file.name,
                         type = if (file.isDirectory) "dir" else "file",
-                        size = if (file.isFile) file.length() else null
+                        size = if (file.isFile) file.length() else null,
+                        lastModified = file.lastModified(),
+                        path = buildPath(path, file.name)
                     )
                 } catch (e: Exception) {
                     null
@@ -79,11 +81,18 @@ class FileStorageHelper(private val activity: Activity) {
             com.stremer.files.FileItem(
                 name = file.name,
                 type = if (file.isDirectory) "dir" else "file",
-                size = if (file.isFile) file.length() else null
+                size = if (file.isFile) file.length() else null,
+                lastModified = file.lastModified(),
+                path = "/${path.trim('/')}"
             )
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun buildPath(parent: String, name: String): String {
+        val base = parent.trim('/')
+        return if (base.isEmpty()) "/$name" else "/$base/$name"
     }
 
     fun deleteFile(path: String): Boolean {

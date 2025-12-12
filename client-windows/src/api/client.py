@@ -19,6 +19,25 @@ class APIClient:
         resp.raise_for_status()
         return resp.json().get("items", [])
 
+    def search(self, path: str = "/", q: str | None = None, type_: str | None = None, size_min: int | None = None, size_max: int | None = None, modified_after: int | None = None, modified_before: int | None = None, limit: int = 200) -> List[Dict]:
+        url = f"{self.base_url}/search"
+        params = {"path": path, "limit": limit}
+        if q:
+            params["q"] = q
+        if type_:
+            params["type"] = type_
+        if size_min is not None:
+            params["sizeMin"] = size_min
+        if size_max is not None:
+            params["sizeMax"] = size_max
+        if modified_after is not None:
+            params["modifiedAfter"] = modified_after
+        if modified_before is not None:
+            params["modifiedBefore"] = modified_before
+        resp = requests.get(url, params=params, headers=self._headers(), timeout=30)
+        resp.raise_for_status()
+        return resp.json().get("items", [])
+
     def stream_url(self, path: str) -> str:
         # Only include token parameter if we have a valid token
         if self.token:

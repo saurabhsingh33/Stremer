@@ -102,7 +102,9 @@ class SafHelper(private val activity: Activity) {
                 com.stremer.files.FileItem(
                     name = name,
                     type = "dir",
-                    size = null
+                    size = null,
+                    lastModified = null,
+                    path = "/$name"
                 )
             }
         }
@@ -117,16 +119,25 @@ class SafHelper(private val activity: Activity) {
         if (files.isEmpty()) return emptyList()
         return files.mapNotNull { f ->
             try {
+                val name = f.name ?: "unknown"
+                val isDir = f.isDirectory
                 com.stremer.files.FileItem(
-                    name = f.name ?: "unknown",
-                    type = if (f.isDirectory) "dir" else "file",
-                    size = if (f.isFile) f.length() else null
+                    name = name,
+                    type = if (isDir) "dir" else "file",
+                    size = if (f.isFile) f.length() else null,
+                    lastModified = try { f.lastModified() } catch (_: Exception) { null },
+                    path = buildPath(cleaned, name)
                 )
             } catch (e: Exception) {
                 android.util.Log.e("SafHelper", "Error processing file: ${e.message}")
                 null
             }
         }
+    }
+
+    private fun buildPath(parent: String, name: String): String {
+        val base = parent.trim('/')
+        return if (base.isEmpty()) "/$name" else "/$base/$name"
     }
 
     fun getFile(path: String): DocumentFile? {
@@ -140,6 +151,8 @@ class SafHelper(private val activity: Activity) {
     fun getFileInfo(path: String): com.stremer.files.FileItem? {
         val file = getFile(path) ?: return null
         return try {
+            val isDir = file.isDirectory
+            val lm = try { file.lastModified() } catch (_: Exception) { null }
             val fileSize = if (file.isFile) {
                 // DocumentFile.length() can return 0 for some files, query using cursor
                 try {
@@ -172,8 +185,10 @@ class SafHelper(private val activity: Activity) {
 
             com.stremer.files.FileItem(
                 name = file.name ?: "unknown",
-                type = if (file.isDirectory) "dir" else "file",
-                size = fileSize
+                type = if (isDir) "dir" else "file",
+                size = fileSize,
+                lastModified = lm,
+                path = "/${path.trim('/')}"
             )
         } catch (e: Exception) {
             android.util.Log.e("SafHelper", "Error getting file info: ${e.message}")

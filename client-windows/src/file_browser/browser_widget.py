@@ -11,6 +11,10 @@ from PyQt6.QtWidgets import (
     QListView,
     QToolButton,
     QTreeView,
+    QLineEdit,
+    QComboBox,
+    QLabel,
+    QPushButton,
 )
 from PyQt6.QtCore import Qt, QPoint, QSize, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QStyle
@@ -46,6 +50,8 @@ class BrowserWidget(QWidget):
         self._thumb_active = 0
         self._back_stack: list[str] = []
         self._forward_stack: list[str] = []
+        self._last_search_items: list[dict] | None = None
+        self._last_search_path: str | None = None
 
         layout = QVBoxLayout(self)
 
@@ -57,6 +63,62 @@ class BrowserWidget(QWidget):
         self.upload_btn.setToolTip("Upload files/folders")
         self.upload_btn.clicked.connect(self._on_upload_clicked)
         toolbar_layout.addWidget(self.upload_btn)
+
+        # Advanced search controls
+        toolbar_layout.addSpacing(8)
+        toolbar_layout.addWidget(QLabel("Search:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Name contains...")
+        self.search_input.setFixedWidth(180)
+        toolbar_layout.addWidget(self.search_input)
+
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["Any", "File", "Folder"])
+        self.type_combo.setFixedWidth(90)
+        toolbar_layout.addWidget(self.type_combo)
+
+        self.size_min = QLineEdit(); self.size_min.setPlaceholderText("Min KB")
+        self.size_min.setFixedWidth(70)
+        toolbar_layout.addWidget(self.size_min)
+        self.size_max = QLineEdit(); self.size_max.setPlaceholderText("Max KB")
+        self.size_max.setFixedWidth(70)
+        toolbar_layout.addWidget(self.size_max)
+
+        self.search_btn = QPushButton("🔍 Filter")
+        self.search_btn.setFixedWidth(90)
+        self.search_btn.setMinimumHeight(28)
+        self.search_btn.setEnabled(False)  # Disabled until filters are entered
+        self.search_btn.setStyleSheet(
+            "QPushButton { "
+            "background-color: #0078d4; color: white; border: none; border-radius: 4px; "
+            "font-weight: bold; font-size: 11px; padding: 6px 12px; "
+            "} "
+            "QPushButton:hover:enabled { background-color: #106ebe; cursor: pointer; } "
+            "QPushButton:pressed:enabled { background-color: #005a9e; } "
+            "QPushButton:disabled { background-color: #cccccc; color: #666; }"
+        )
+        self.search_btn.clicked.connect(self._on_search)
+        toolbar_layout.addWidget(self.search_btn)
+
+        # Connect filter fields to enable/disable the search button
+        self.search_input.textChanged.connect(self._update_filter_button_state)
+        self.size_min.textChanged.connect(self._update_filter_button_state)
+        self.size_max.textChanged.connect(self._update_filter_button_state)
+        self.type_combo.currentTextChanged.connect(self._update_filter_button_state)
+
+        self.clear_search_btn = QPushButton("✕ Clear")
+        self.clear_search_btn.setFixedWidth(85)
+        self.clear_search_btn.setMinimumHeight(28)
+        self.clear_search_btn.setStyleSheet(
+            "QPushButton { "
+            "background-color: #6c757d; color: white; border: none; border-radius: 4px; "
+            "font-weight: bold; font-size: 11px; padding: 6px 12px; "
+            "} "
+            "QPushButton:hover { background-color: #5a6268; cursor: pointer; } "
+            "QPushButton:pressed { background-color: #4e555b; }"
+        )
+        self.clear_search_btn.clicked.connect(self._clear_search)
+        toolbar_layout.addWidget(self.clear_search_btn)
 
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
@@ -132,51 +194,16 @@ class BrowserWidget(QWidget):
             self.path_changed.emit(self.current_path)
             self.selection_cleared.emit()
             return
+        self._last_search_items = None
+        self._last_search_path = None
         items = self.api_client.list_files(path)
         # Clear selections
         self.table.clearSelection()
         self.icon_list.clearSelection()
         if self.view_mode == "list":
-            self.table.setRowCount(0)
-            for item in items:
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                name = item.get("name", "")
-                type_ = item.get("type", "file")
-                size_val = item.get("size", None)
-                path_full = f"{self.current_path.rstrip('/')}/{name}" if self.current_path != "/" else f"/{name}"
-                name_item = QTableWidgetItem(name)
-                # Attach metadata to first column item for retrieval
-                name_item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
-                self.table.setItem(row, 0, name_item)
-                self.table.setItem(row, 1, QTableWidgetItem(type_))
-                size_text = self._fmt_size(item.get("size", None)) if item.get("type") == "file" else "-"
-                self.table.setItem(row, 2, QTableWidgetItem(size_text))
-                self.table.setRowHeight(row, 24)
-            self.table.resizeColumnsToContents()
+            self._render_table(items, self.current_path)
         else:
-            self.icon_list.clear()
-            style = self.style()
-            folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-            file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-            for it in items:
-                name = it.get("name", "")
-                type_ = it.get("type", "file")
-                size_val = it.get("size", None)
-                size_text = self._fmt_size(size_val) if type_ == "file" else ""
-                text = f"{name}\n{size_text}" if size_text else name
-                icon = folder_icon if type_ == "dir" else file_icon
-                item = QListWidgetItem(icon, text)
-                # Store metadata for context/double-click
-                path_full = f"{self.current_path.rstrip('/')}/{name}" if self.current_path != "/" else f"/{name}"
-                item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
-                self.icon_list.addItem(item)
-
-                # If thumbnails view and item is a file, request a thumbnail from server
-                # Request thumbnails for all file types so server-generated fallback
-                # icons (PDF, TXT, DOC, ZIP, etc.) are displayed.
-                if self.view_mode == "thumbnails" and type_ == "file":
-                    self._load_thumbnail_async(item, path_full)
+            self._render_icons(items, self.current_path)
         # Notify listeners that path changed
         self.path_changed.emit(self.current_path)
         self.selection_cleared.emit()
@@ -218,6 +245,60 @@ class BrowserWidget(QWidget):
             parent = "/"
         self.navigate_to(parent)
 
+    def _render_table(self, items, base_path: str):
+        self.table.setRowCount(0)
+        for item in items:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            name = item.get("name", "")
+            type_ = item.get("type", "file")
+            size_val = item.get("size", None)
+            path_full = item.get("path") or (f"{base_path.rstrip('/')}/{name}" if base_path != "/" else f"/{name}")
+            name_item = QTableWidgetItem(name)
+            # Attach metadata to first column item for retrieval
+            name_item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
+            self.table.setItem(row, 0, name_item)
+            self.table.setItem(row, 1, QTableWidgetItem(type_))
+            size_text = self._fmt_size(item.get("size", None)) if item.get("type") == "file" else "-"
+            self.table.setItem(row, 2, QTableWidgetItem(size_text))
+            self.table.setRowHeight(row, 24)
+        self.table.resizeColumnsToContents()
+
+    def _render_icons(self, items, base_path: str):
+        self.icon_list.clear()
+        style = self.style()
+        folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        for it in items:
+            name = it.get("name", "")
+            type_ = it.get("type", "file")
+            size_val = it.get("size", None)
+            size_text = self._fmt_size(size_val) if type_ == "file" else ""
+            text = f"{name}\n{size_text}" if size_text else name
+            icon = folder_icon if type_ == "dir" else file_icon
+            item = QListWidgetItem(icon, text)
+            # Store metadata for context/double-click
+            path_full = it.get("path") or (f"{base_path.rstrip('/')}/{name}" if base_path != "/" else f"/{name}")
+            item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
+            self.icon_list.addItem(item)
+
+            # If thumbnails view and item is a file, request a thumbnail from server
+            # Request thumbnails for all file types so server-generated fallback
+            # icons (PDF, TXT, DOC, ZIP, etc.) are displayed.
+            if self.view_mode == "thumbnails" and type_ == "file":
+                self._load_thumbnail_async(item, path_full)
+
+    def _update_filter_button_state(self):
+        """Enable search button only if at least one filter criterion is entered."""
+        has_name = bool(self.search_input.text().strip())
+        has_size_min = bool(self.size_min.text().strip())
+        has_size_max = bool(self.size_max.text().strip())
+        has_type = self.type_combo.currentText() != "Any"
+
+        # Enable button if any filter is set
+        has_filters = has_name or has_size_min or has_size_max or has_type
+        self.search_btn.setEnabled(has_filters)
+
     def _selected_item(self):
         if self.view_mode == "list":
             idx = self.table.currentRow()
@@ -239,6 +320,51 @@ class BrowserWidget(QWidget):
                 return None
             data = item.data(Qt.ItemDataRole.UserRole)
             return data
+
+    def _on_search(self):
+        if not self.api_client:
+            return
+        q = self.search_input.text().strip()
+        type_map = {"Any": None, "File": "file", "Folder": "dir"}
+        type_val = type_map.get(self.type_combo.currentText(), None)
+        def _to_int(val):
+            try:
+                return int(float(val)) if val != "" else None
+            except Exception:
+                return None
+        size_min = _to_int(self.size_min.text())
+        size_max = _to_int(self.size_max.text())
+        try:
+            items = self.api_client.search(
+                path=self.current_path,
+                q=q or None,
+                type_=type_val,
+                size_min=size_min * 1024 if size_min is not None else None,
+                size_max=size_max * 1024 if size_max is not None else None,
+            )
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Search failed", str(e))
+            return
+        self._last_search_items = items
+        self._last_search_path = self.current_path
+        # Render search results
+        if self.view_mode == "list":
+            self._render_table(items, self.current_path)
+        else:
+            self._render_icons(items, self.current_path)
+        self.path_changed.emit(self.current_path + " (search)")
+        self.selection_cleared.emit()
+
+    def _clear_search(self):
+        self.search_input.clear()
+        self.size_min.clear()
+        self.size_max.clear()
+        self.type_combo.setCurrentIndex(0)  # Reset to "Any"
+        if self._last_search_items is not None:
+            self._last_search_items = None
+            self.load_path(self.current_path)
+        self._update_filter_button_state()
 
     def _open_context_menu(self, pos: QPoint):
         item = self._selected_item()

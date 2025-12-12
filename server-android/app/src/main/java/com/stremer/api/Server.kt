@@ -103,6 +103,34 @@ object Server {
                 }
 
                 authenticate("auth-bearer") {
+                    // Advanced search with filters
+                    get("/search") {
+                        try {
+                            val path = call.request.queryParameters["path"] ?: "/"
+                            val q = call.request.queryParameters["q"]
+                            val type = call.request.queryParameters["type"]
+                            val sizeMin = call.request.queryParameters["sizeMin"]?.toLongOrNull()
+                            val sizeMax = call.request.queryParameters["sizeMax"]?.toLongOrNull()
+                            val modifiedAfter = call.request.queryParameters["modifiedAfter"]?.toLongOrNull()
+                            val modifiedBefore = call.request.queryParameters["modifiedBefore"]?.toLongOrNull()
+                            val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 200
+
+                            val filters = com.stremer.di.ServiceLocator.SearchFilters(
+                                name = q,
+                                type = type,
+                                sizeMin = sizeMin,
+                                sizeMax = sizeMax,
+                                modifiedAfter = modifiedAfter,
+                                modifiedBefore = modifiedBefore,
+                                limit = limit
+                            )
+                            val results = com.stremer.di.ServiceLocator.search(path.trim('/'), filters)
+                            call.respond(mapOf("items" to results))
+                        } catch (e: Exception) {
+                            android.util.Log.e("Server", "Search failed: ${e.message}")
+                            call.respondText("Search failed: ${e.message}", status = HttpStatusCode.InternalServerError)
+                        }
+                    }
                     // Upload/overwrite file bytes with streaming support
                     put("/file") {
                         try {

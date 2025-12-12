@@ -146,6 +146,65 @@ object ServiceLocator {
         return result
     }
 
+    data class SearchFilters(
+        val name: String? = null,
+        val type: String? = null,
+        val sizeMin: Long? = null,
+        val sizeMax: Long? = null,
+        val modifiedAfter: Long? = null,
+        val modifiedBefore: Long? = null,
+        val limit: Int = 200
+    )
+
+    fun search(path: String, filters: SearchFilters): List<FileItem> {
+        val results = mutableListOf<FileItem>()
+        val queue: ArrayDeque<Pair<String, FileItem>> = ArrayDeque()
+
+        fun enqueueChildren(items: List<FileItem>) {
+            for (item in items) {
+                val fullPath = item.path ?: buildPath(path, item.name)
+                val withPath = item.copy(path = fullPath)
+                if (matches(withPath, filters)) {
+                    results.add(withPath)
+                    if (results.size >= filters.limit) return
+                }
+                if (withPath.type == "dir") {
+                    queue.addLast(withPath.path!! to withPath)
+                }
+            }
+        }
+
+        // Seed with starting path
+        val startItems = safList(path)
+        enqueueChildren(startItems)
+        while (queue.isNotEmpty() && results.size < filters.limit) {
+            val (p, _) = queue.removeFirst()
+            val children = safList(p.trim('/'))
+            enqueueChildren(children)
+        }
+        return results.take(filters.limit)
+    }
+
+    private fun matches(item: FileItem, filters: SearchFilters): Boolean {
+        filters.name?.let { q ->
+            if (!item.name.contains(q, ignoreCase = true)) return false
+        }
+        filters.type?.let { t ->
+            if (t.lowercase() == "file" && item.type != "file") return false
+            if (t.lowercase() == "dir" && item.type != "dir") return false
+        }
+        filters.sizeMin?.let { if ((item.size ?: Long.MIN_VALUE) < it) return false }
+        filters.sizeMax?.let { if ((item.size ?: Long.MAX_VALUE) > it) return false }
+        filters.modifiedAfter?.let { if ((item.lastModified ?: Long.MIN_VALUE) < it) return false }
+        filters.modifiedBefore?.let { if ((item.lastModified ?: Long.MAX_VALUE) > it) return false }
+        return true
+    }
+
+    private fun buildPath(parent: String, name: String): String {
+        val base = parent.trim('/')
+        return if (base.isEmpty()) "/$name" else "/$base/$name"
+    }
+
     fun getFileInfo(path: String): FileItem? {
         return if (useFileStorage) {
             fileStorage?.getFileInfo(path)
