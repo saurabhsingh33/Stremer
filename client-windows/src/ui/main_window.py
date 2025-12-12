@@ -690,18 +690,67 @@ class MainWindow(QMainWindow):
 
         name_lower = os.path.basename(path).lower()
 
-        # If audio file, open in mini music player
+        # If audio file, open in mini music player with playlist from current folder
         if self._is_audio(name_lower):
             try:
-                url = self.api_client.stream_url(path)
-                token = self.api_client.token if self.api_client.token else None
-                display_name = os.path.basename(path).lstrip('/') or None
+                # Get all audio files from current folder by reading the browser widget
+                current_folder = os.path.dirname(path) or "/"
 
-                print(f"Opening audio: {path}")
-                print(f"URL: {url}")
+                # Build playlist from all audio files visible in the browser
+                playlist = []
+                current_index = 0
 
-                # Create MusicPlayer
-                player = MusicPlayer(url, token, display_name=display_name, parent=None)
+                # Get items from table view or icon list depending on current view mode
+                if self.browser.view_mode == "list":
+                    # Get from table
+                    for row in range(self.browser.table.rowCount()):
+                        item_widget = self.browser.table.item(row, 0)
+                        if item_widget:
+                            item_data = item_widget.data(Qt.ItemDataRole.UserRole)
+                            if item_data and item_data.get("type") == "file":
+                                item_name = item_data.get("name", "")
+                                item_path = item_data.get("path", "")
+                                if self._is_audio(item_name.lower()):
+                                    url = self.api_client.stream_url(item_path)
+                                    token = self.api_client.token if self.api_client.token else None
+                                    playlist.append({"url": url, "token": token, "display_name": item_name})
+                                    if item_path == path:
+                                        current_index = len(playlist) - 1
+                else:
+                    # Get from icon list
+                    for i in range(self.browser.icon_list.count()):
+                        item_widget = self.browser.icon_list.item(i)
+                        if item_widget:
+                            item_data = item_widget.data(Qt.ItemDataRole.UserRole)
+                            if item_data and item_data.get("type") == "file":
+                                item_name = item_data.get("name", "")
+                                item_path = item_data.get("path", "")
+                                if self._is_audio(item_name.lower()):
+                                    url = self.api_client.stream_url(item_path)
+                                    token = self.api_client.token if self.api_client.token else None
+                                    playlist.append({"url": url, "token": token, "display_name": item_name})
+                                    if item_path == path:
+                                        current_index = len(playlist) - 1
+
+                # Fallback if no playlist found
+                if not playlist:
+                    url = self.api_client.stream_url(path)
+                    token = self.api_client.token if self.api_client.token else None
+                    display_name = os.path.basename(path).lstrip('/') or None
+                    playlist = [{"url": url, "token": token, "display_name": display_name}]
+                    current_index = 0
+
+                print(f"Opening audio playlist with {len(playlist)} tracks, starting at index {current_index}")
+
+                # Create MusicPlayer with playlist and starting index
+                player = MusicPlayer(
+                    playlist[current_index]["url"],
+                    playlist[current_index]["token"],
+                    playlist[current_index]["display_name"],
+                    parent=None,
+                    playlist=playlist,
+                    start_index=current_index
+                )
                 player.setModal(False)
                 player.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
                 self._open_music_players.append(player)

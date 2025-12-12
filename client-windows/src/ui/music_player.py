@@ -1,22 +1,27 @@
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel, QStyle
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel, QStyle, QListWidget
 )
 from PyQt6.QtCore import Qt, QTimer
 import vlc
 
 
 class MusicPlayer(QDialog):
-    def __init__(self, url: str, token: str = None, display_name: str = None, parent=None):
+    def __init__(self, url: str, token: str = None, display_name: str = None, parent=None, playlist=None, start_index=0):
         super().__init__(parent)
-        self.url = url
-        self.token = token
-        self.display_name = display_name or "Audio"
+
+        # Playlist support: each item is {url, token, display_name}
+        self.playlist = playlist if playlist else [{"url": url, "token": token, "display_name": display_name or "Audio"}]
+        self.current_index = start_index
+
         self.is_seeking = False
         self.is_playing = False
 
-        self.setWindowTitle(f"Music Player - {self.display_name}")
-        self.setMinimumWidth(450)
-        self.setMinimumHeight(150)
+        # Repeat modes: "no_repeat", "repeat_one", "repeat_all"
+        self.repeat_mode = "no_repeat"
+
+        self.setWindowTitle(f"Music Player")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(250)
 
         # Setup VLC player
         self.instance = vlc.Instance('--no-video')
@@ -33,8 +38,8 @@ class MusicPlayer(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Title label
-        self.title_label = QLabel(self.display_name)
+        # Title label with track counter
+        self.title_label = QLabel()
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 8px;")
         layout.addWidget(self.title_label)
@@ -43,6 +48,17 @@ class MusicPlayer(QDialog):
         self.status_label = QLabel("Loading...")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
+
+        # Playlist widget (only show if multiple tracks)
+        if len(self.playlist) > 1:
+            self.playlist_widget = QListWidget()
+            self.playlist_widget.setMaximumHeight(100)
+            for item in self.playlist:
+                self.playlist_widget.addItem(item["display_name"])
+            self.playlist_widget.itemDoubleClicked.connect(self._on_playlist_item_clicked)
+            layout.addWidget(self.playlist_widget)
+        else:
+            self.playlist_widget = None
 
         # Time labels and seek slider
         time_layout = QHBoxLayout()
@@ -63,6 +79,15 @@ class MusicPlayer(QDialog):
         # Control buttons
         controls_layout = QHBoxLayout()
 
+        # Previous button (only if playlist has multiple tracks)
+        if len(self.playlist) > 1:
+            self.prev_button = QPushButton()
+            self.prev_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaSkipBackward))
+            self.prev_button.clicked.connect(self._previous_track)
+            self.prev_button.setFixedSize(40, 40)
+        else:
+            self.prev_button = None
+
         self.play_button = QPushButton()
         self.play_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.play_button.clicked.connect(self._toggle_play)
@@ -72,6 +97,15 @@ class MusicPlayer(QDialog):
         self.stop_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop))
         self.stop_button.clicked.connect(self._stop)
         self.stop_button.setFixedSize(40, 40)
+
+        # Next button (only if playlist has multiple tracks)
+        if len(self.playlist) > 1:
+            self.next_button = QPushButton()
+            self.next_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaSkipForward))
+            self.next_button.clicked.connect(self._next_track)
+            self.next_button.setFixedSize(40, 40)
+        else:
+            self.next_button = None
 
         # Volume control
         volume_icon = QLabel("🔊")
@@ -83,24 +117,59 @@ class MusicPlayer(QDialog):
         # Set initial volume for VLC (0-100 range)
         self.player.audio_set_volume(50)
 
+        # Repeat mode button
+        self.repeat_button = QPushButton("Repeat: Off")
+        self.repeat_button.setMinimumWidth(90)
+        self.repeat_button.setToolTip("Click to cycle: Off → All → One")
+        self.repeat_button.clicked.connect(self._toggle_repeat_mode)
+        self.repeat_button.setStyleSheet("QPushButton { padding: 5px; }")
+
         controls_layout.addStretch()
+        if self.prev_button:
+            controls_layout.addWidget(self.prev_button)
         controls_layout.addWidget(self.play_button)
         controls_layout.addWidget(self.stop_button)
+        if self.next_button:
+            controls_layout.addWidget(self.next_button)
         controls_layout.addStretch()
+        controls_layout.addWidget(self.repeat_button)
         controls_layout.addWidget(volume_icon)
         controls_layout.addWidget(self.volume_slider)
 
         layout.addLayout(controls_layout)
 
+        # Update UI with current track info
+        self._update_track_info()
+
+        # Update UI with current track info
+        self._update_track_info()
+
+    def _update_track_info(self):
+        """Update UI to show current track information"""
+        current = self.playlist[self.current_index]
+        if len(self.playlist) > 1:
+            title = f"{current['display_name']} ({self.current_index + 1}/{len(self.playlist)})"
+        else:
+            title = current['display_name']
+        self.title_label.setText(title)
+
+        # Highlight current track in playlist
+        if self.playlist_widget:
+            self.playlist_widget.setCurrentRow(self.current_index)
+
     def _load_audio(self):
         """Load and start streaming the audio file"""
         try:
-            print(f"MusicPlayer: Loading {self.url}")
+            current = self.playlist[self.current_index]
+            print(f"MusicPlayer: Loading {current['url']}")
 
             # Set media from URL
-            media = self.instance.media_new(self.url)
+            media = self.instance.media_new(current['url'])
             self.player.set_media(media)
             self.status_label.setText("Ready")
+
+            # Update track info
+            self._update_track_info()
 
             # Auto-play after loading
             QTimer.singleShot(500, self._play)
@@ -154,6 +223,24 @@ class MusicPlayer(QDialog):
             self.seek_slider.setRange(0, length)
             self.duration_label.setText(self._format_time(length))
 
+        # Auto-advance to next track when current track ends
+        if length > 0 and position >= length - 200 and self.is_playing:
+            if self.repeat_mode == "repeat_one":
+                # Repeat current song
+                QTimer.singleShot(100, lambda: self.player.set_time(0))
+            elif self.repeat_mode == "repeat_all":
+                # Go to next track, or loop back to first
+                if self.current_index < len(self.playlist) - 1:
+                    QTimer.singleShot(100, self._next_track)
+                else:
+                    # Loop back to first track
+                    self.current_index = 0
+                    QTimer.singleShot(100, lambda: (self._stop(), self._load_audio()))
+            elif self.repeat_mode == "no_repeat":
+                # Only advance if not at last track
+                if self.current_index < len(self.playlist) - 1:
+                    QTimer.singleShot(100, self._next_track)
+
     def _on_volume_changed(self, value):
         self.player.audio_set_volume(value)
 
@@ -166,6 +253,43 @@ class MusicPlayer(QDialog):
 
     def _on_slider_moved(self, position):
         self.position_label.setText(self._format_time(position))
+
+    def _toggle_repeat_mode(self):
+        """Cycle through repeat modes"""
+        if self.repeat_mode == "no_repeat":
+            self.repeat_mode = "repeat_all"
+            self.repeat_button.setText("Repeat: All")
+            self.repeat_button.setStyleSheet("QPushButton { padding: 5px; background-color: #4CAF50; color: white; font-weight: bold; }")
+        elif self.repeat_mode == "repeat_all":
+            self.repeat_mode = "repeat_one"
+            self.repeat_button.setText("Repeat: One")
+            self.repeat_button.setStyleSheet("QPushButton { padding: 5px; background-color: #2196F3; color: white; font-weight: bold; }")
+        else:  # repeat_one
+            self.repeat_mode = "no_repeat"
+            self.repeat_button.setText("Repeat: Off")
+            self.repeat_button.setStyleSheet("QPushButton { padding: 5px; }")
+
+    def _next_track(self):
+        """Play next track in playlist"""
+        if self.current_index < len(self.playlist) - 1:
+            self.current_index += 1
+            self._stop()
+            self._load_audio()
+
+    def _previous_track(self):
+        """Play previous track in playlist"""
+        if self.current_index > 0:
+            self.current_index -= 1
+            self._stop()
+            self._load_audio()
+
+    def _on_playlist_item_clicked(self, item):
+        """Handle playlist item double-click"""
+        index = self.playlist_widget.row(item)
+        if index != self.current_index:
+            self.current_index = index
+            self._stop()
+            self._load_audio()
 
     def _format_time(self, ms):
         """Format milliseconds to MM:SS"""
