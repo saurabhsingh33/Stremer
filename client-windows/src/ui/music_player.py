@@ -2,7 +2,9 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel, QStyle, QListWidget
 )
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush
 import vlc
+import requests
 
 
 class MusicPlayer(QDialog):
@@ -38,16 +40,34 @@ class MusicPlayer(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Title label with track counter
-        self.title_label = QLabel()
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 8px;")
-        layout.addWidget(self.title_label)
+        # Top info row: album art (left) and text (right)
+        top_row = QHBoxLayout()
 
-        # Status label
+        self.art_label = QLabel()
+        self.art_label.setFixedSize(140, 140)
+        self.art_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.art_label.setStyleSheet("border: 1px solid #444; background: #222;")
+        self._set_placeholder_art()
+        top_row.addWidget(self.art_label)
+
+        text_col = QVBoxLayout()
+        text_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.title_label = QLabel()
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 4px 4px 2px 4px;")
+        text_col.addWidget(self.title_label)
+
         self.status_label = QLabel("Loading...")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.status_label)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.status_label.setStyleSheet("padding: 0 4px 4px 4px; color: #ccc;")
+        text_col.addWidget(self.status_label)
+
+        # Spacer to push text to top if art is taller
+        text_col.addStretch()
+
+        top_row.addLayout(text_col, 1)
+        layout.addLayout(top_row)
 
         # Playlist widget (only show if multiple tracks)
         if len(self.playlist) > 1:
@@ -171,6 +191,12 @@ class MusicPlayer(QDialog):
             # Update track info
             self._update_track_info()
 
+            # Reset art to placeholder before fetching
+            self._set_placeholder_art()
+
+            # Try to fetch album art shortly after loading
+            QTimer.singleShot(600, self._load_album_art)
+
             # Auto-play after loading
             QTimer.singleShot(500, self._play)
         except Exception as e:
@@ -274,6 +300,52 @@ class MusicPlayer(QDialog):
             self.repeat_mode = "no_repeat"
             self.repeat_button.setText("Repeat: Off")
             self.repeat_button.setStyleSheet("QPushButton { padding: 5px; }")
+
+    def _set_placeholder_art(self):
+        """Set a simple placeholder when no album art is available"""
+        placeholder = QPixmap(140, 140)
+        placeholder.fill(Qt.GlobalColor.darkGray)
+        # Draw a simple music note
+        painter = QPainter(placeholder)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(Qt.GlobalColor.white, 3))
+        painter.setBrush(QBrush(Qt.GlobalColor.white))
+        # Note stem and head
+        painter.drawLine(85, 40, 85, 95)
+        painter.drawLine(85, 40, 110, 30)
+        painter.drawEllipse(70, 90, 25, 18)
+        # Small second head
+        painter.drawEllipse(95, 76, 22, 16)
+        painter.end()
+        self.art_label.setPixmap(placeholder)
+
+    def _load_album_art(self):
+        """Attempt to load album art from VLC metadata"""
+        try:
+            media = self.player.get_media()
+            if not media:
+                return
+            art_url = media.get_meta(vlc.Meta.ArtworkURL)
+            if not art_url:
+                return
+
+            # Fetch artwork (supports http/https or file paths)
+            if art_url.startswith("http://") or art_url.startswith("https://"):
+                resp = requests.get(art_url, timeout=3)
+                resp.raise_for_status()
+                data = resp.content
+            else:
+                with open(art_url, "rb") as f:
+                    data = f.read()
+
+            pix = QPixmap()
+            if pix.loadFromData(data):
+                self.art_label.setPixmap(pix.scaled(140, 140, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                self._set_placeholder_art()
+        except Exception as e:
+            print(f"MusicPlayer: album art load failed: {e}")
+            self._set_placeholder_art()
 
     def _next_track(self):
         """Play next track in playlist"""
