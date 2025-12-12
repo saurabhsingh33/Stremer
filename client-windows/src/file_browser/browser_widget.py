@@ -52,6 +52,8 @@ class BrowserWidget(QWidget):
         self._forward_stack: list[str] = []
         self._last_search_items: list[dict] | None = None
         self._last_search_path: str | None = None
+        self.sort_field = "name"  # name, date, size, type
+        self.sort_ascending = True
 
         layout = QVBoxLayout(self)
 
@@ -120,6 +122,30 @@ class BrowserWidget(QWidget):
         self.clear_search_btn.clicked.connect(self._clear_search)
         toolbar_layout.addWidget(self.clear_search_btn)
 
+        # Sorting controls
+        toolbar_layout.addSpacing(16)
+        toolbar_layout.addWidget(QLabel("Sort:"))
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Name", "Date", "Size", "Type"])
+        self.sort_combo.setFixedWidth(90)
+        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        toolbar_layout.addWidget(self.sort_combo)
+
+        self.sort_order_btn = QPushButton("↑")
+        self.sort_order_btn.setFixedWidth(40)
+        self.sort_order_btn.setMinimumHeight(28)
+        self.sort_order_btn.setToolTip("Click to toggle sort order (ascending/descending)")
+        self.sort_order_btn.setStyleSheet(
+            "QPushButton { "
+            "background-color: #6c757d; color: white; border: none; border-radius: 4px; "
+            "font-weight: bold; font-size: 12px; padding: 4px; "
+            "} "
+            "QPushButton:hover { background-color: #5a6268; cursor: pointer; } "
+            "QPushButton:pressed { background-color: #4e555b; }"
+        )
+        self.sort_order_btn.clicked.connect(self._toggle_sort_order)
+        toolbar_layout.addWidget(self.sort_order_btn)
+
         toolbar_layout.addStretch()
         layout.addLayout(toolbar_layout)
         # List (table) view
@@ -168,6 +194,61 @@ class BrowserWidget(QWidget):
             self.icon_list.show()
         # Reload current path to apply view change
         self.load_path(self.current_path)
+
+    def _on_sort_changed(self, text):
+        """Handle sort field selection change."""
+        sort_map = {"Name": "name", "Date": "date", "Size": "size", "Type": "type"}
+        self.sort_field = sort_map.get(text, "name")
+        # Re-render current items with new sort
+        if self._last_search_items is not None:
+            # Re-render search results
+            if self.view_mode == "list":
+                self._render_table(self._last_search_items, self.current_path)
+            else:
+                self._render_icons(self._last_search_items, self.current_path)
+        else:
+            # Re-load current path
+            self.load_path(self.current_path)
+
+    def _toggle_sort_order(self):
+        """Toggle between ascending and descending sort order."""
+        self.sort_ascending = not self.sort_ascending
+        # Update button appearance
+        self.sort_order_btn.setText("↑" if self.sort_ascending else "↓")
+        # Re-render with new sort order
+        if self._last_search_items is not None:
+            # Re-render search results
+            if self.view_mode == "list":
+                self._render_table(self._last_search_items, self.current_path)
+            else:
+                self._render_icons(self._last_search_items, self.current_path)
+        else:
+            # Re-load current path
+            self.load_path(self.current_path)
+
+    def _sort_items(self, items):
+        """Sort items based on current sort_field and sort_ascending settings."""
+        def get_sort_key(item):
+            if self.sort_field == "name":
+                return item.get("name", "").lower()
+            elif self.sort_field == "date":
+                # lastModified is unix timestamp (int), sort numerically
+                modified = item.get("lastModified")
+                return modified if modified is not None else 0
+            elif self.sort_field == "size":
+                # Size in bytes, treat folders as 0
+                if item.get("type") == "dir":
+                    return -1  # Folders at top when sorting by size
+                size = item.get("size")
+                return size if size is not None else 0
+            elif self.sort_field == "type":
+                # Folders first (dir < file alphabetically), then by name
+                type_val = item.get("type", "file")
+                name = item.get("name", "").lower()
+                return (type_val, name)
+            return ""
+
+        return sorted(items, key=get_sort_key, reverse=not self.sort_ascending)
 
     def _fmt_size(self, size):
         try:
@@ -247,7 +328,8 @@ class BrowserWidget(QWidget):
 
     def _render_table(self, items, base_path: str):
         self.table.setRowCount(0)
-        for item in items:
+        sorted_items = self._sort_items(items)
+        for item in sorted_items:
             row = self.table.rowCount()
             self.table.insertRow(row)
             name = item.get("name", "")
@@ -269,7 +351,8 @@ class BrowserWidget(QWidget):
         style = self.style()
         folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-        for it in items:
+        sorted_items = self._sort_items(items)
+        for it in sorted_items:
             name = it.get("name", "")
             type_ = it.get("type", "file")
             size_val = it.get("size", None)
