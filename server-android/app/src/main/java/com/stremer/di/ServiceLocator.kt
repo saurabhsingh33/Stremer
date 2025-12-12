@@ -62,13 +62,42 @@ object ServiceLocator {
             val uri = Uri.parse(uriString)
             val lastSeg = uri.lastPathSegment ?: return "Folder${index + 1}"
             val candidate = lastSeg.split('/').lastOrNull() ?: lastSeg
-            if (candidate.contains(":")) {
+            val baseName = if (candidate.contains(":")) {
                 val parts = candidate.split(":", limit = 2)
                 val rest = parts.getOrNull(1) ?: return "Folder${index + 1}"
                 rest.split('/').lastOrNull()?.takeIf { it.isNotEmpty() } ?: "Folder${index + 1}"
             } else {
                 candidate.takeIf { it.isNotEmpty() } ?: "Folder${index + 1}"
             }
+
+            // Check if name already exists, if so make it unique
+            val existingRoots = saf?.getRoots()?.keys ?: emptySet()
+            if (existingRoots.contains(baseName)) {
+                // Name collision - append disambiguator based on path segments
+                var uniqueName = baseName
+                var counter = 2
+
+                // Try to extract parent path for disambiguation
+                val pathParts = lastSeg.split('/')
+                if (pathParts.size > 1) {
+                    val parentName = pathParts.getOrNull(pathParts.size - 2)
+                    if (parentName != null && parentName.isNotEmpty() && !parentName.contains(":")) {
+                        uniqueName = "$baseName ($parentName)"
+                        if (!existingRoots.contains(uniqueName)) {
+                            return uniqueName
+                        }
+                    }
+                }
+
+                // Fallback: append counter
+                while (existingRoots.contains(uniqueName)) {
+                    uniqueName = "$baseName ($counter)"
+                    counter++
+                }
+                return uniqueName
+            }
+
+            baseName
         } catch (e: Exception) {
             "Folder${index + 1}"
         }
