@@ -226,8 +226,14 @@ class MusicPlayer(QDialog):
         # Auto-advance to next track when current track ends
         if length > 0 and position >= length - 200 and self.is_playing:
             if self.repeat_mode == "repeat_one":
-                # Repeat current song
-                QTimer.singleShot(100, lambda: self.player.set_time(0))
+                # Hard restart current song to ensure playback resumes
+                def _restart_current():
+                    self.player.stop()
+                    self.player.set_time(0)
+                    self.player.play()
+                    self.is_playing = True
+                    self.update_timer.start()
+                QTimer.singleShot(50, _restart_current)
             elif self.repeat_mode == "repeat_all":
                 # Go to next track, or loop back to first
                 if self.current_index < len(self.playlist) - 1:
