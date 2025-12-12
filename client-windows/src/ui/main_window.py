@@ -7,6 +7,7 @@ from ui.login_dialog import LoginDialog
 from file_browser.browser_widget import BrowserWidget
 from media.vlc_player import play_url
 from media.image_viewer import ImageViewer
+from ui.music_player import MusicPlayer
 from ui.details_panel import DetailsPanel
 import os
 import tempfile
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
 
         self.api_client: APIClient | None = None
         self._open_image_views: list[ImageViewer] = []
+        self._open_music_players: list[MusicPlayer] = []
         self._current_login_thread: QThread | None = None
 
         # Enable drag and drop
@@ -686,8 +688,42 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import Qt, QCoreApplication
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-        # If image file, open in in-app viewer without saving to disk
         name_lower = os.path.basename(path).lower()
+
+        # If audio file, open in mini music player
+        if self._is_audio(name_lower):
+            try:
+                url = self.api_client.stream_url(path)
+                token = self.api_client.token if self.api_client.token else None
+                display_name = os.path.basename(path).lstrip('/') or None
+
+                print(f"Opening audio: {path}")
+                print(f"URL: {url}")
+
+                # Create MusicPlayer
+                player = MusicPlayer(url, token, display_name=display_name, parent=None)
+                player.setModal(False)
+                player.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                self._open_music_players.append(player)
+
+                def _cleanup_player():
+                    try:
+                        self._open_music_players.remove(player)
+                    except ValueError:
+                        pass
+                player.destroyed.connect(lambda *_: _cleanup_player())
+
+                player.show()
+                self.statusBar().showMessage("Opening music player…", 2000)
+                return
+            except Exception as e:
+                print(f"MusicPlayer error: {e}")
+                import traceback
+                traceback.print_exc()
+                QMessageBox.critical(self, "Open failed", f"Could not open audio: {e}")
+                return
+
+        # If image file, open in in-app viewer without saving to disk
         if self._is_image(name_lower):
             try:
                 url = self.api_client.stream_url(path)
@@ -858,6 +894,11 @@ class MainWindow(QMainWindow):
     def _is_image(self, name_lower: str) -> bool:
         return name_lower.endswith((
             ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"
+        ))
+
+    def _is_audio(self, name_lower: str) -> bool:
+        return name_lower.endswith((
+            ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma", ".opus"
         ))
 
     def _delete(self, path: str):
