@@ -681,6 +681,11 @@ class MainWindow(QMainWindow):
     def _open_default(self, path: str):
         if not self.api_client:
             return
+
+        # Import Qt early to avoid UnboundLocalError
+        from PyQt6.QtCore import Qt, QCoreApplication
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
         # If image file, open in in-app viewer without saving to disk
         name_lower = os.path.basename(path).lower()
         if self._is_image(name_lower):
@@ -722,7 +727,6 @@ class MainWindow(QMainWindow):
                 print("DEBUG main_window: About to return from image open")
 
                 # Force Qt to process pending events before returning
-                from PyQt6.QtCore import QCoreApplication
                 print("DEBUG main_window: Processing pending events")
                 QCoreApplication.processEvents()
                 print("DEBUG main_window: Pending events processed")
@@ -739,8 +743,6 @@ class MainWindow(QMainWindow):
         base_name = os.path.basename(path).lstrip('/')
         if not base_name:
             base_name = "file"
-        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
-        from PyQt6.QtCore import Qt
 
         suggested = os.path.join(os.path.expanduser("~"), "Downloads", base_name)
         dest, _ = QFileDialog.getSaveFileName(self, f"Save {base_name} as", suggested)
