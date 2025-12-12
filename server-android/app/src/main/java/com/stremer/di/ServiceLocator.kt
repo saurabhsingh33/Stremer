@@ -25,29 +25,53 @@ object ServiceLocator {
 
         SettingsRepository.init(activity)
         // Initialize flow with current state
-        // Try to restore previously saved root URI from settings
+        // Try to restore previously saved root URIs from settings
         try {
-            val stored = SettingsRepository.getRootUri()
-            if (stored != null) {
+            val storedUris = SettingsRepository.getRootUris()
+            if (storedUris.isNotEmpty()) {
                 try {
-                    if (useFileStorage) {
-                        // Try to use file storage path
-                        fileStorage?.setRoot(stored)
-                        android.util.Log.d("ServiceLocator", "Using FileStorageHelper for full device access")
-                    } else {
-                        // Fall back to SAF
-                        val uri = Uri.parse(stored)
-                        saf?.setRoot(uri)
-                        android.util.Log.d("ServiceLocator", "Using SAF for storage access")
+                    for ((index, uriString) in storedUris.withIndex()) {
+                        if (useFileStorage) {
+                            // Try to use file storage path
+                            if (index == 0) {
+                                fileStorage?.setRoot(uriString)
+                            }
+                            android.util.Log.d("ServiceLocator", "Using FileStorageHelper for full device access")
+                        } else {
+                            // Fall back to SAF
+                            val uri = Uri.parse(uriString)
+                            // Generate a friendly name from the URI
+                            val name = extractFolderName(uriString, index)
+                            saf?.addRoot(name, uri)
+                            android.util.Log.d("ServiceLocator", "Added root: $name")
+                        }
                     }
+                    android.util.Log.d("ServiceLocator", "Restored ${storedUris.size} root(s)")
                 } catch (e: Exception) {
-                    android.util.Log.e("ServiceLocator", "Failed to restore root: $stored", e)
+                    android.util.Log.e("ServiceLocator", "Failed to restore roots", e)
                 }
             }
         } catch (e: Exception) {
             // ignore
         }
         rootSetFlow.value = isRootSet()
+    }
+
+    private fun extractFolderName(uriString: String, index: Int): String {
+        return try {
+            val uri = Uri.parse(uriString)
+            val lastSeg = uri.lastPathSegment ?: return "Folder${index + 1}"
+            val candidate = lastSeg.split('/').lastOrNull() ?: lastSeg
+            if (candidate.contains(":")) {
+                val parts = candidate.split(":", limit = 2)
+                val rest = parts.getOrNull(1) ?: return "Folder${index + 1}"
+                rest.split('/').lastOrNull()?.takeIf { it.isNotEmpty() } ?: "Folder${index + 1}"
+            } else {
+                candidate.takeIf { it.isNotEmpty() } ?: "Folder${index + 1}"
+            }
+        } catch (e: Exception) {
+            "Folder${index + 1}"
+        }
     }
 
     fun setRoot(uri: Uri) {
@@ -67,22 +91,41 @@ object ServiceLocator {
                 android.util.Log.w("ServiceLocator", "Failed to set file path, falling back to SAF: ${e.message}")
             }
         }
-        // Fall back to SAF
-        saf?.setRoot(uri)
-        android.util.Log.d("ServiceLocator", "Storage root set to: $uri")
+        // Fall back to SAF - generate friendly name
+        val name = extractFolderName(uri.toString(), saf?.getRoots()?.size ?: 0)
+        saf?.addRoot(name, uri)
+        android.util.Log.d("ServiceLocator", "Storage root added: $name")
+
+        // Save all roots
+        val allRoots = saf?.getRoots()?.values?.map { it.toString() } ?: emptyList()
         try {
-            SettingsRepository.setRootUri(uri.toString())
+            SettingsRepository.setRootUris(allRoots)
         } catch (e: Exception) {
             // ignore
         }
         rootSetFlow.value = true
     }
 
+    fun removeRoot(name: String) {
+        saf?.removeRoot(name)
+        val allRoots = saf?.getRoots()?.values?.map { it.toString() } ?: emptyList()
+        try {
+            SettingsRepository.setRootUris(allRoots)
+        } catch (e: Exception) {
+            // ignore
+        }
+        rootSetFlow.value = isRootSet()
+    }
+
+    fun getRootNames(): List<String> {
+        return saf?.getRoots()?.keys?.toList() ?: emptyList()
+    }
+
     fun isRootSet(): Boolean {
         return if (useFileStorage) {
             fileStorage?.getRootPath() != null
         } else {
-            saf?.rootUri != null
+            saf?.rootUri != null || (saf?.getRoots()?.isNotEmpty() == true)
         }
     }
 
@@ -156,10 +199,10 @@ object ServiceLocator {
         if (useFileStorage) {
             fileStorage?.setRoot("")
         } else {
-            saf?.rootUri = null
+            saf?.clearRoots()
         }
         try {
-            SettingsRepository.setRootUri(null)
+            SettingsRepository.setRootUris(emptyList())
         } catch (e: Exception) {
             // ignore
         }

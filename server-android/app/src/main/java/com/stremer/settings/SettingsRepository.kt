@@ -10,6 +10,7 @@ object SettingsRepository {
     private const val KEY_USERNAME = "auth_username"
     private const val KEY_PASSWORD = "auth_password"
     private const val KEY_ROOT_URI = "root_uri"
+    private const val KEY_ROOT_URIS = "root_uris"
 
     @Volatile
     private var prefs: android.content.SharedPreferences? = null
@@ -56,6 +57,33 @@ object SettingsRepository {
             requirePrefs().edit().remove(KEY_ROOT_URI).apply()
         } else {
             requirePrefs().edit().putString(KEY_ROOT_URI, uri).apply()
+        }
+    }
+
+    fun getRootUris(): List<String> {
+        val json = requirePrefs().getString(KEY_ROOT_URIS, null)
+        if (json.isNullOrEmpty()) {
+            // Migrate from single root if available
+            val single = getRootUri()
+            return if (single != null) listOf(single) else emptyList()
+        }
+        return try {
+            org.json.JSONArray(json).let { array ->
+                (0 until array.length()).mapNotNull { array.optString(it) }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun setRootUris(uris: List<String>) {
+        val json = org.json.JSONArray(uris).toString()
+        requirePrefs().edit().putString(KEY_ROOT_URIS, json).apply()
+        // Also update single root for backward compatibility
+        if (uris.isNotEmpty()) {
+            setRootUri(uris.first())
+        } else {
+            setRootUri(null)
         }
     }
 }

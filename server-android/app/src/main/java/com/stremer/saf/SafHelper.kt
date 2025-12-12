@@ -9,6 +9,9 @@ import androidx.documentfile.provider.DocumentFile
 class SafHelper(private val activity: Activity) {
     var rootUri: Uri? = null
 
+    // Multi-folder support: store multiple roots with friendly names
+    private val roots = mutableMapOf<String, Uri>()
+
     fun setRoot(uri: Uri) {
         rootUri = uri
         activity.contentResolver.takePersistableUriPermission(
@@ -17,14 +20,68 @@ class SafHelper(private val activity: Activity) {
         )
     }
 
+    fun addRoot(name: String, uri: Uri) {
+        activity.contentResolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        roots[name] = uri
+        // If no primary root, set first as primary
+        if (rootUri == null) {
+            rootUri = uri
+        }
+    }
+
+    fun removeRoot(name: String) {
+        roots.remove(name)
+        if (roots.isEmpty()) {
+            rootUri = null
+        } else if (rootUri == roots[name]) {
+            rootUri = roots.values.firstOrNull()
+        }
+    }
+
+    fun getRoots(): Map<String, Uri> = roots.toMap()
+
+    fun clearRoots() {
+        roots.clear()
+        rootUri = null
+    }
+
     private fun root(): DocumentFile? {
         val base = rootUri ?: return null
         return DocumentFile.fromTreeUri(activity, base)
     }
 
+    private fun rootFor(name: String): DocumentFile? {
+        val uri = roots[name] ?: return null
+        return DocumentFile.fromTreeUri(activity, uri)
+    }
+
     private fun resolve(path: String): DocumentFile? {
-        val docRoot = root() ?: return null
         val cleaned = path.trim('/')
+
+        // Check if path starts with a root folder name
+        if (roots.isNotEmpty() && cleaned.isNotEmpty()) {
+            val firstSegment = cleaned.split('/').first()
+            if (roots.containsKey(firstSegment)) {
+                // Path is relative to a named root
+                val docRoot = rootFor(firstSegment) ?: return null
+                val remaining = cleaned.substringAfter('/', "")
+                if (remaining.isEmpty()) return docRoot
+
+                var current: DocumentFile = docRoot
+                val segments = remaining.split('/')
+                for (seg in segments) {
+                    val next = current.findFile(seg) ?: return null
+                    current = next
+                }
+                return current
+            }
+        }
+
+        // Fall back to primary root
+        val docRoot = root() ?: return null
         if (cleaned.isEmpty()) return docRoot
         var current: DocumentFile = docRoot
         val segments = cleaned.split('/')
@@ -37,6 +94,19 @@ class SafHelper(private val activity: Activity) {
 
     fun listFiles(path: String = ""): List<com.stremer.files.FileItem> {
         android.util.Log.d("SafHelper", "listFiles called with path: '$path', rootUri: $rootUri")
+
+        // If at root and we have multiple roots, list root folders
+        val cleaned = path.trim('/')
+        if (cleaned.isEmpty() && roots.isNotEmpty()) {
+            return roots.keys.map { name ->
+                com.stremer.files.FileItem(
+                    name = name,
+                    type = "dir",
+                    size = null
+                )
+            }
+        }
+
         val target = resolve(path)
         if (target == null) {
             android.util.Log.e("SafHelper", "Failed to resolve path: '$path'")

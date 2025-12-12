@@ -36,13 +36,22 @@ fun MainScreen() {
     // Observe actual storage state (survives navigation) via ServiceLocator flow
     val storageSelected by ServiceLocator.rootSetFlow.collectAsState(initial = ServiceLocator.isRootSet())
 
+    // Track root folder names for multi-folder display
+    var rootFolders by remember { mutableStateOf(ServiceLocator.getRootNames()) }
+
+    // Update root folders list when storage changes
+    LaunchedEffect(storageSelected) {
+        rootFolders = ServiceLocator.getRootNames()
+    }
+
     val storagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             try {
                 ServiceLocator.setRoot(uri)
-                android.widget.Toast.makeText(context, "Storage selected", android.widget.Toast.LENGTH_SHORT).show()
+                rootFolders = ServiceLocator.getRootNames()
+                android.widget.Toast.makeText(context, "Folder added", android.widget.Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "Failed to select storage: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "Failed to add folder: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -88,7 +97,7 @@ fun MainScreen() {
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        // Main buttons - Start/Stop and Select Folder side by side
+        // Main buttons - Start/Stop and Add Folder side by side
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
                 enabled = storageSelected,
@@ -101,7 +110,7 @@ fun MainScreen() {
                         if (!ServiceLocator.isRootSet()) {
                             android.widget.Toast.makeText(
                                 context,
-                                "Please select storage first",
+                                "Please add at least one folder",
                                 android.widget.Toast.LENGTH_SHORT
                             ).show()
                         } else {
@@ -117,7 +126,7 @@ fun MainScreen() {
                 modifier = Modifier.weight(1f),
                 onClick = { storagePicker.launch(null) }
             ) {
-                Text("Select Folder")
+                Text("Add Folder")
             }
         }
         // Full Access button on its own row if API 30+ and permission not yet granted
@@ -165,20 +174,51 @@ fun MainScreen() {
         Spacer(modifier = Modifier.height(8.dp))
         Column {
             Text(
-                text = if (storageSelected) "✓ Storage selected" else "⚠ No storage selected",
+                text = if (storageSelected) {
+                    if (rootFolders.size > 1) "✓ ${rootFolders.size} folders shared"
+                    else "✓ Storage selected"
+                } else "⚠ No folders shared",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onBackground
             )
 
-            // Show a short friendly storage name when available (recomputes when storageSelected changes)
-            val storageDisplay = remember(storageSelected) { ServiceLocator.getRootDisplayName() }
-            if (!storageDisplay.isNullOrEmpty()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Storage: $storageDisplay",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+            // Show list of shared folders with remove buttons
+            if (rootFolders.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(text = "Shared Folders:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        rootFolders.forEach { folderName ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "📁 $folderName",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = {
+                                        if (!serverRunning) {
+                                            ServiceLocator.removeRoot(folderName)
+                                            rootFolders = ServiceLocator.getRootNames()
+                                            android.widget.Toast.makeText(context, "Removed $folderName", android.widget.Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            android.widget.Toast.makeText(context, "Stop server first", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    enabled = !serverRunning
+                                ) {
+                                    Text("Remove", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Show helper text when no storage selected
@@ -186,15 +226,15 @@ fun MainScreen() {
                 Spacer(modifier = Modifier.height(12.dp))
                 Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(modifier = Modifier.padding(10.dp)) {
-                        Text(text = "📁 How to select storage:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground)
+                        Text(text = "📁 How to add folders:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground)
                         Spacer(modifier = Modifier.height(6.dp))
                         val buildVersion = android.os.Build.VERSION.SDK_INT
                         val fullAccessText = if (buildVersion >= android.os.Build.VERSION_CODES.R) {
-                            "• Tap 'Full Access' button to grant permission for complete device access\n• Then select any folder or use the file system directly\n"
+                            "• Tap 'Full Access' button to grant permission for complete device access\n• Then add any folder or use the file system directly\n"
                         } else {
                             ""
                         }
-                        val folderText = "• Alternatively, tap 'Select Folder' and choose Documents, DCIM, or other folders\n• You can create a new folder to store files for sharing"
+                        val folderText = "• Alternatively, tap 'Add Folder' and choose Documents, DCIM, or other folders\n• You can add multiple folders to share different locations\n• Each folder appears as a separate directory in the client"
                         Text(text = fullAccessText + folderText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
                     }
                 }
