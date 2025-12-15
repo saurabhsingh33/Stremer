@@ -131,6 +131,48 @@ object Server {
                             call.respondText("Search failed: ${e.message}", status = HttpStatusCode.InternalServerError)
                         }
                     }
+
+                    // Camera snapshot (authenticated) - legacy
+                    get("/camera/snapshot") {
+                        if (!com.stremer.di.ServiceLocator.isCameraEnabled()) {
+                            return@get call.respondText("Camera disabled", status = HttpStatusCode.Forbidden)
+                        }
+                        if (!com.stremer.di.ServiceLocator.startCameraStream()) {
+                            return@get call.respondText("No frame", status = HttpStatusCode.ServiceUnavailable)
+                        }
+                        val bytes = com.stremer.di.ServiceLocator.nextCameraFrame(1500)
+                        if (bytes == null) {
+                            return@get call.respondText("No frame", status = HttpStatusCode.ServiceUnavailable)
+                        }
+                        call.respondBytes(bytes, contentType = ContentType.Image.JPEG)
+                    }
+
+                    // MJPEG streaming endpoint
+                    get("/camera/stream") {
+                        if (!com.stremer.di.ServiceLocator.isCameraEnabled()) {
+                            return@get call.respondText("Camera disabled", status = HttpStatusCode.Forbidden)
+                        }
+                        val ok = com.stremer.di.ServiceLocator.startCameraStream()
+                        if (!ok) return@get call.respondText("Camera error", status = HttpStatusCode.ServiceUnavailable)
+
+                        val boundary = "frame"
+                        call.respondBytesWriter(ContentType.parse("multipart/x-mixed-replace; boundary=$boundary")) {
+                            try {
+                                while (true) {
+                                    val frame = com.stremer.di.ServiceLocator.nextCameraFrame(1500) ?: continue
+                                    val header = "--$boundary\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.size}\r\n\r\n"
+                                    writeFully(header.encodeToByteArray())
+                                    writeFully(frame)
+                                    writeFully("\r\n".encodeToByteArray())
+                                    flush()
+                                }
+                            } catch (_: Throwable) {
+                                // client disconnected
+                            } finally {
+                                try { com.stremer.di.ServiceLocator.stopCameraStream() } catch (_: Exception) { }
+                            }
+                        }
+                    }
                     // Upload/overwrite file bytes with streaming support
                     put("/file") {
                         try {

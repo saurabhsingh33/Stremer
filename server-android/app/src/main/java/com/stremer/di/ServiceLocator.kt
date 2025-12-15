@@ -8,22 +8,28 @@ import com.stremer.settings.SettingsRepository
 import android.net.Uri
 import com.stremer.files.FileItem
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.stremer.camera.CameraStreamer
 
 object ServiceLocator {
     private var saf: SafHelper? = null
     private var fileStorage: FileStorageHelper? = null
     private var useFileStorage = false
+    private var activityRef: Activity? = null
+    private var cameraStreamer: CameraStreamer? = null
+    private var cameraEnabled: Boolean = false
     var token: String? = null
 
     // Expose a Flow so UI can observe storage selection changes
     val rootSetFlow = MutableStateFlow(false)
 
     fun init(activity: Activity) {
+        activityRef = activity
         saf = SafHelper(activity)
         fileStorage = FileStorageHelper(activity)
         useFileStorage = fileStorage?.canUseFullAccess() ?: false
 
         SettingsRepository.init(activity)
+        cameraEnabled = SettingsRepository.isCameraEnabled()
         // Initialize flow with current state
         // Try to restore previously saved root URIs from settings
         try {
@@ -55,6 +61,17 @@ object ServiceLocator {
             // ignore
         }
         rootSetFlow.value = isRootSet()
+    }
+
+    fun cameraSnapshot(): ByteArray? {
+        if (!cameraEnabled) return null
+        val ok = startCameraStream()
+        if (!ok) return null
+        val frame = nextCameraFrame(1500)
+        if (frame == null) {
+            android.util.Log.e("ServiceLocator", "cameraSnapshot failed: no frame")
+        }
+        return frame
     }
 
     private fun extractFolderName(uriString: String, index: Int): String {
@@ -156,6 +173,35 @@ object ServiceLocator {
         } else {
             saf?.rootUri != null || (saf?.getRoots()?.isNotEmpty() == true)
         }
+    }
+
+    fun isCameraEnabled(): Boolean = cameraEnabled
+
+    fun setCameraEnabled(enabled: Boolean) {
+        cameraEnabled = enabled
+        try { SettingsRepository.setCameraEnabled(enabled) } catch (_: Exception) { }
+        if (!enabled) stopCameraStream()
+    }
+
+    private fun ensureCamera(): CameraStreamer {
+        if (cameraStreamer == null) {
+            val act = activityRef ?: throw IllegalStateException("No activity")
+            cameraStreamer = CameraStreamer(act)
+        }
+        return cameraStreamer!!
+    }
+
+    fun startCameraStream(): Boolean {
+        if (!cameraEnabled) return false
+        return ensureCamera().start()
+    }
+
+    fun nextCameraFrame(timeoutMs: Long = 1000): ByteArray? {
+        return cameraStreamer?.nextFrame(timeoutMs)
+    }
+
+    fun stopCameraStream() {
+        try { cameraStreamer?.stop() } catch (_: Exception) { }
     }
 
     fun validate(username: String?, password: String?): Boolean {

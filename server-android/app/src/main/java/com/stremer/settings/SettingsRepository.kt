@@ -11,6 +11,7 @@ object SettingsRepository {
     private const val KEY_PASSWORD = "auth_password"
     private const val KEY_ROOT_URI = "root_uri"
     private const val KEY_ROOT_URIS = "root_uris"
+    private const val KEY_CAMERA_ENABLED = "camera_enabled"
 
     @Volatile
     private var prefs: android.content.SharedPreferences? = null
@@ -85,5 +86,11 @@ object SettingsRepository {
         } else {
             setRootUri(null)
         }
+    }
+
+    fun isCameraEnabled(): Boolean = requirePrefs().getBoolean(KEY_CAMERA_ENABLED, false)
+
+    fun setCameraEnabled(enabled: Boolean) {
+        requirePrefs().edit().putBoolean(KEY_CAMERA_ENABLED, enabled).apply()
     }
 }

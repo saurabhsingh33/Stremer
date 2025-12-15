@@ -16,15 +16,18 @@
         <service
             android:name=".service.StremerServerService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|camera" />
     </application>
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Allow full device storage access on API 30+ for better UX -->
     <uses-permission android:name="android.permission.MANAGE_ALL_FILES" />
     <!-- Read/write external storage for older APIs -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Camera access for snapshot streaming -->
+    <uses-permission android:name="android.permission.CAMERA" />
 </manifest>

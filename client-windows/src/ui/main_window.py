@@ -8,6 +8,7 @@ from file_browser.browser_widget import BrowserWidget
 from media.vlc_player import play_url
 from media.image_viewer import ImageViewer
 from ui.music_player import MusicPlayer
+from ui.camera_viewer import CameraViewer
 from ui.details_panel import DetailsPanel
 import os
 import tempfile
@@ -147,7 +148,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.container)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with, on_upload=self._upload)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with, on_upload=self._upload, on_camera=self._open_camera_stream)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
         # Ensure initial view mode matches combobox selection (Thumbnails)
@@ -366,6 +367,24 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Refresh failed: {e}")
         else:
             QMessageBox.information(self, "Not connected", "Login first.")
+
+    def _open_camera_stream(self):
+        if not self.api_client:
+            QMessageBox.information(self, "Not connected", "Login first.")
+            return
+        try:
+            # Always create a fresh viewer so the stream thread starts cleanly
+            try:
+                if hasattr(self, "_camera_viewer") and self._camera_viewer is not None:
+                    self._camera_viewer.close()
+            except Exception:
+                pass
+            self._camera_viewer = CameraViewer(self.api_client, self)
+            self._camera_viewer.show()
+            self._camera_viewer.raise_()
+            self._camera_viewer.activateWindow()
+        except Exception as e:
+            QMessageBox.critical(self, "Camera", f"Unable to open camera stream: {e}")
 
     def _show_start_screen(self):
         try:

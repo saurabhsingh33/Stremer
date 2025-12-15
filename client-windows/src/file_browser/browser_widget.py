@@ -27,7 +27,7 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None, on_upload=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None, on_upload=None, on_camera=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
@@ -40,6 +40,7 @@ class BrowserWidget(QWidget):
         self.on_new_file = on_new_file
         self.on_open_with = on_open_with
         self.on_upload = on_upload
+        self.on_camera = on_camera
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -122,6 +123,17 @@ class BrowserWidget(QWidget):
         self.clear_search_btn.clicked.connect(self._clear_search)
         toolbar_layout.addWidget(self.clear_search_btn)
 
+        # Camera streaming button (added later to right side)
+        self.camera_btn = QToolButton()
+        self.camera_btn.setText("Camera")
+        self.camera_btn.setToolTip("Open live camera stream")
+        self.camera_btn.setFixedHeight(28)
+        self.camera_btn.setAutoRaise(True)
+        self.camera_btn.setStyleSheet(
+            "QToolButton { font-weight: bold; padding: 4px 10px; }"
+        )
+        self.camera_btn.clicked.connect(self._open_camera)
+
         # Sorting controls
         toolbar_layout.addSpacing(16)
         toolbar_layout.addWidget(QLabel("Sort:"))
@@ -147,6 +159,8 @@ class BrowserWidget(QWidget):
         toolbar_layout.addWidget(self.sort_order_btn)
 
         toolbar_layout.addStretch()
+        # Place camera button at the far right
+        toolbar_layout.addWidget(self.camera_btn)
         layout.addLayout(toolbar_layout)
         # List (table) view
         self.table = QTableWidget(0, 3)
@@ -573,6 +587,10 @@ class BrowserWidget(QWidget):
                     self.on_new_file(self.current_path)
 
         print("DEBUG browser_widget: _open_context_menu_icons completed")
+
+    def _open_camera(self):
+        if self.on_camera:
+            self.on_camera()
 
     def _on_double_click(self):
         item = self._selected_item()
