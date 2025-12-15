@@ -96,7 +96,7 @@ class BrowserWidget(QWidget):
             "background-color: #0078d4; color: white; border: none; border-radius: 4px; "
             "font-weight: bold; font-size: 11px; padding: 6px 12px; "
             "} "
-            "QPushButton:hover:enabled { background-color: #106ebe; cursor: pointer; } "
+            "QPushButton:hover:enabled { background-color: #106ebe; } "
             "QPushButton:pressed:enabled { background-color: #005a9e; } "
             "QPushButton:disabled { background-color: #cccccc; color: #666; }"
         )
@@ -117,7 +117,7 @@ class BrowserWidget(QWidget):
             "background-color: #6c757d; color: white; border: none; border-radius: 4px; "
             "font-weight: bold; font-size: 11px; padding: 6px 12px; "
             "} "
-            "QPushButton:hover { background-color: #5a6268; cursor: pointer; } "
+            "QPushButton:hover { background-color: #5a6268; } "
             "QPushButton:pressed { background-color: #4e555b; }"
         )
         self.clear_search_btn.clicked.connect(self._clear_search)
@@ -152,7 +152,7 @@ class BrowserWidget(QWidget):
             "background-color: #6c757d; color: white; border: none; border-radius: 4px; "
             "font-weight: bold; font-size: 12px; padding: 4px; "
             "} "
-            "QPushButton:hover { background-color: #5a6268; cursor: pointer; } "
+            "QPushButton:hover { background-color: #5a6268; } "
             "QPushButton:pressed { background-color: #4e555b; }"
         )
         self.sort_order_btn.clicked.connect(self._toggle_sort_order)
