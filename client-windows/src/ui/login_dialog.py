@@ -1,5 +1,6 @@
 import socket
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import (
     QDialog,
@@ -34,32 +35,51 @@ class ScanThread(QtCore.QThread):
             self.results_ready.emit(found)
             return
         base = '.'.join(parts[:3]) + '.'
-        # scan 1..254
-        total = 254
-        for i in range(1, 255):
+        # scan 1..254 in parallel using a thread pool for speed
+        ips = [base + str(i) for i in range(1, 255)]
+        total = len(ips)
+        completed = 0
+
+        def _probe_ip(ip: str):
             if not self._running:
-                break
-            ip = base + str(i)
-            # emit progress before probing
-            try:
-                self.progress.emit(i, total, ip)
-            except Exception:
-                pass
-            # perform a lightweight HTTP probe against /files to verify Stremer server
+                return (ip, None)
             try:
                 url = f"http://{ip}:{self.port}/ping"
                 r = requests.get(url, timeout=self.timeout)
-                # treat 200 (OK) as evidence of a Stremer server (ping is unauthenticated)
                 if r.status_code == 200:
-                    server_url = f"http://{ip}:{self.port}"
-                    found.append(server_url)
+                    return (ip, f"http://{ip}:{self.port}")
+            except Exception:
+                pass
+            return (ip, None)
+
+        with ThreadPoolExecutor(max_workers=min(32, total)) as pool:
+            futures = []
+            for idx, ip in enumerate(ips, 1):
+                if not self._running:
+                    break
+                # Emit progress for the IP being scheduled
+                try:
+                    self.progress.emit(idx, total, ip)
+                except Exception:
+                    pass
+                futures.append(pool.submit(_probe_ip, ip))
+
+            for fut in as_completed(futures):
+                if not self._running:
+                    break
+                ip, found_url = fut.result()
+                completed += 1
+                try:
+                    # Update progress based on completed probes
+                    self.progress.emit(completed, total, ip)
+                except Exception:
+                    pass
+                if found_url:
+                    found.append(found_url)
                     try:
-                        self.found.emit(server_url)
+                        self.found.emit(found_url)
                     except Exception:
                         pass
-            except Exception:
-                # ignore timeouts and connection errors
-                pass
         self.results_ready.emit(found)
 
     def stop(self):
