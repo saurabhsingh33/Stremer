@@ -104,7 +104,48 @@ fun SettingsScreen() {
             color = MaterialTheme.colorScheme.onBackground
         )
 
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "Camera",
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
         Spacer(Modifier.height(12.dp))
+
+        var camEnabled by remember { mutableStateOf(ServiceLocator.isCameraEnabled()) }
+        Row {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Enable camera streaming",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "Allow clients to view live camera stream (secure, requires auth)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f)
+                )
+            }
+            Switch(
+                checked = camEnabled,
+                onCheckedChange = {
+                    camEnabled = it
+                    ServiceLocator.setCameraEnabled(it)
+                    if (it) {
+                        // Request camera permission when enabling
+                        try {
+                            val hasCam = ctx.checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (!hasCam && ctx is android.app.Activity) {
+                                ctx.requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 1001)
+                            }
+                        } catch (_: Exception) { }
+                    }
+                },
+                colors = SwitchDefaults.colors()
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
         Button(onClick = {
             try {
                 ServiceLocator.clearRoot()

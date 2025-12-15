@@ -281,39 +281,5 @@ fun MainScreen() {
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Camera streaming", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = "Allow clients to view a live snapshot stream (secure, requires auth)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f)
-                    )
-                }
-                var camEnabled by remember { mutableStateOf(ServiceLocator.isCameraEnabled()) }
-                Switch(
-                    checked = camEnabled,
-                    onCheckedChange = {
-                        camEnabled = it
-                        ServiceLocator.setCameraEnabled(it)
-                        if (it) {
-                            // Request camera permission when enabling
-                            try {
-                                val hasCam = context.checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                                if (!hasCam && context is android.app.Activity) {
-                                    context.requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 1001)
-                                }
-                            } catch (_: Exception) { }
-                        }
-                    }
-                )
-            }
-        }
     }
 }
