@@ -210,6 +210,11 @@ class MainWindow(QMainWindow):
             # Show login dialog
             dlg = LoginDialog()
 
+            # Pre-fill with last successful host
+            last_host = self._get_last_host()
+            if last_host:
+                dlg.host_input.setText(last_host)
+
             # Add a "Connect without login" button
             from PyQt6.QtWidgets import QPushButton
             connect_btn = QPushButton("Connect without login")
@@ -257,6 +262,9 @@ class MainWindow(QMainWindow):
             try:
                 if token:
                     self._save_session(url, token, "anonymous")
+                else:
+                    # No token but successful - save just the host
+                    self._save_last_host(url)
             except Exception:
                 pass
             dlg.accept()
@@ -323,7 +331,9 @@ class MainWindow(QMainWindow):
                 if token and (getattr(dlg, 'remember_check', None) is None or dlg.remember_check.isChecked()):
                     self._save_session(url, token, user_label)
                 else:
+                    # Clear full session but always save last successful host
                     self._clear_saved_session()
+                    self._save_last_host(url)
             except Exception:
                 pass
             dlg.accept()
@@ -1096,18 +1106,58 @@ class MainWindow(QMainWindow):
             'base_url': base_url,
             'token': token,
             'username': username,
-            'expires_at': int(time.time()) + 30 * 24 * 3600
+            'expires_at': int(time.time()) + 30 * 24 * 3600,
+            'last_successful_host': base_url
         }
         try:
             self._session_file().write_text(json.dumps(data))
         except Exception:
             pass
 
-    def _clear_saved_session(self):
+    def _save_last_host(self, base_url: str):
+        """Save only the last successful host without session token."""
+        try:
+            fp = self._session_file()
+            data = {}
+            if fp.exists():
+                try:
+                    data = json.loads(fp.read_text())
+                except Exception:
+                    pass
+            data['last_successful_host'] = base_url
+            fp.write_text(json.dumps(data))
+        except Exception:
+            pass
+
+    def _get_last_host(self) -> str | None:
+        """Retrieve the last successful host URL."""
         try:
             fp = self._session_file()
             if fp.exists():
-                fp.unlink()
+                data = json.loads(fp.read_text())
+                return data.get('last_successful_host')
+        except Exception:
+            pass
+        return None
+
+    def _clear_saved_session(self):
+        """Clear session token but preserve last successful host."""
+        try:
+            fp = self._session_file()
+            if fp.exists():
+                # Read existing data to preserve last_successful_host
+                try:
+                    data = json.loads(fp.read_text())
+                    last_host = data.get('last_successful_host')
+                    if last_host:
+                        # Write back only the last host
+                        fp.write_text(json.dumps({'last_successful_host': last_host}))
+                    else:
+                        # No host to preserve, delete file
+                        fp.unlink()
+                except Exception:
+                    # If we can't read, just delete
+                    fp.unlink()
         except Exception:
             pass
 
