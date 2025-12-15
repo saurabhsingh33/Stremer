@@ -1,11 +1,24 @@
 import socket
 import requests
 from PyQt6 import QtCore
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QLabel, QPushButton, QHBoxLayout, QCheckBox, QListWidget, QListWidgetItem
+from PyQt6.QtWidgets import (
+    QDialog,
+    QVBoxLayout,
+    QLineEdit,
+    QLabel,
+    QPushButton,
+    QHBoxLayout,
+    QCheckBox,
+    QListWidget,
+    QListWidgetItem,
+    QProgressBar,
+)
 
 
 class ScanThread(QtCore.QThread):
     results_ready = QtCore.pyqtSignal(list)
+    progress = QtCore.pyqtSignal(int, int, str)  # current index, total, current ip
+    found = QtCore.pyqtSignal(str)  # url found
 
     def __init__(self, prefix: str, port: int = 8080, timeout: float = 0.25, parent=None):
         super().__init__(parent)
@@ -22,17 +35,28 @@ class ScanThread(QtCore.QThread):
             return
         base = '.'.join(parts[:3]) + '.'
         # scan 1..254
+        total = 254
         for i in range(1, 255):
             if not self._running:
                 break
             ip = base + str(i)
+            # emit progress before probing
+            try:
+                self.progress.emit(i, total, ip)
+            except Exception:
+                pass
             # perform a lightweight HTTP probe against /files to verify Stremer server
             try:
                 url = f"http://{ip}:{self.port}/ping"
                 r = requests.get(url, timeout=self.timeout)
                 # treat 200 (OK) as evidence of a Stremer server (ping is unauthenticated)
                 if r.status_code == 200:
-                    found.append(f"http://{ip}:{self.port}")
+                    server_url = f"http://{ip}:{self.port}"
+                    found.append(server_url)
+                    try:
+                        self.found.emit(server_url)
+                    except Exception:
+                        pass
             except Exception:
                 # ignore timeouts and connection errors
                 pass
@@ -122,39 +146,99 @@ class LoginDialog(QDialog):
         # Disable button while scanning
         self.scan_btn.setEnabled(False)
         self.scan_btn.setText("Scanning…")
-        self._scan_thread = ScanThread(prefix, 8080, timeout=0.18)
-        self._scan_thread.results_ready.connect(self._on_scan_results)
-        self._scan_thread.start()
 
-    def _on_scan_results(self, results: list):
-        self.scan_btn.setEnabled(True)
-        self.scan_btn.setText("Scan LAN")
-        # Show results dialog
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Select server")
-        v = QVBoxLayout(dlg)
-        listw = QListWidget()
-        for url in results:
-            item = QListWidgetItem(url)
-            listw.addItem(item)
-        v.addWidget(listw)
+        # Prepare live results dialog immediately
+        self._scan_dialog = QDialog(self)
+        self._scan_dialog.setWindowTitle("Scanning LAN for Stremer servers…")
+        v = QVBoxLayout(self._scan_dialog)
+        self._scan_status = QLabel("Starting scan…")
+        v.addWidget(self._scan_status)
+        self._scan_progress = QProgressBar()
+        self._scan_progress.setRange(0, 254)
+        self._scan_progress.setValue(0)
+        v.addWidget(self._scan_progress)
+        self._scan_list = QListWidget()
+        v.addWidget(self._scan_list)
         btn_row = QHBoxLayout()
-        ok = QPushButton("Select")
-        cancel = QPushButton("Cancel")
-        btn_row.addWidget(ok)
-        btn_row.addWidget(cancel)
+        self._scan_select_btn = QPushButton("Select")
+        self._scan_select_btn.setEnabled(False)
+        self._scan_cancel_btn = QPushButton("Cancel")
+        btn_row.addWidget(self._scan_select_btn)
+        btn_row.addWidget(self._scan_cancel_btn)
         v.addLayout(btn_row)
 
-        def on_select():
-            it = listw.currentItem()
+        # Enable Select only when item chosen
+        self._scan_list.itemSelectionChanged.connect(
+            lambda: self._scan_select_btn.setEnabled(self._scan_list.currentItem() is not None)
+        )
+
+        # Wire button actions
+        def _select_current():
+            it = self._scan_list.currentItem()
             if it:
                 self.host_input.setText(it.text())
-                dlg.accept()
+                self._stop_scan_thread()
+                self.scan_btn.setEnabled(True)
+                self.scan_btn.setText("Scan LAN")
+                self._scan_dialog.accept()
 
-        ok.clicked.connect(on_select)
-        cancel.clicked.connect(dlg.reject)
+        def _cancel_scan():
+            self._stop_scan_thread()
+            self.scan_btn.setEnabled(True)
+            self.scan_btn.setText("Scan LAN")
+            self._scan_dialog.reject()
 
-        # Double-click to select
-        listw.itemDoubleClicked.connect(lambda it: (self.host_input.setText(it.text()), dlg.accept()))
+        self._scan_select_btn.clicked.connect(_select_current)
+        self._scan_cancel_btn.clicked.connect(_cancel_scan)
+        self._scan_list.itemDoubleClicked.connect(lambda it: (_select_current()))
 
-        dlg.exec()
+        # Start scanning thread and show dialog
+        self._scan_thread = ScanThread(prefix, 8080, timeout=0.18)
+        self._scan_thread.progress.connect(self._on_scan_progress)
+        self._scan_thread.found.connect(self._on_scan_found)
+        self._scan_thread.results_ready.connect(self._on_scan_complete)
+        self._scan_thread.start()
+        self._scan_dialog.show()
+
+    def _on_scan_progress(self, current: int, total: int, ip: str):
+        # Update progress UI
+        try:
+            self._scan_progress.setMaximum(total)
+            self._scan_progress.setValue(current)
+            self._scan_status.setText(f"Scanning: {ip}")
+        except Exception:
+            pass
+
+    def _on_scan_found(self, url: str):
+        # Add found server if not already listed
+        try:
+            for i in range(self._scan_list.count()):
+                if self._scan_list.item(i).text() == url:
+                    return
+            self._scan_list.addItem(QListWidgetItem(url))
+        except Exception:
+            pass
+
+    def _on_scan_complete(self, results: list):
+        # Finalize UI state; keep dialog open for selection
+        try:
+            self._scan_status.setText("Scan complete")
+            self._scan_progress.setValue(self._scan_progress.maximum())
+            # Populate any remaining results that may not have been added (safety)
+            existing = {self._scan_list.item(i).text() for i in range(self._scan_list.count())}
+            for url in results:
+                if url not in existing:
+                    self._scan_list.addItem(QListWidgetItem(url))
+        except Exception:
+            pass
+        # Re-enable the Scan LAN button
+        self.scan_btn.setEnabled(True)
+        self.scan_btn.setText("Scan LAN")
+
+    def _stop_scan_thread(self):
+        try:
+            if self._scan_thread and self._scan_thread.isRunning():
+                self._scan_thread.stop()
+                self._scan_thread.wait(100)
+        except Exception:
+            pass
