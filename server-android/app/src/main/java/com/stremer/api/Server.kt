@@ -137,7 +137,10 @@ object Server {
                         if (!com.stremer.di.ServiceLocator.isCameraEnabled()) {
                             return@get call.respondText("Camera disabled", status = HttpStatusCode.Forbidden)
                         }
-                        if (!com.stremer.di.ServiceLocator.startCameraStream()) {
+                        val lens = call.request.queryParameters["lens"]
+                        val brightness = call.request.queryParameters["brightness"]?.toIntOrNull()
+                        val sharpness = call.request.queryParameters["sharpness"]?.toIntOrNull()
+                        if (!com.stremer.di.ServiceLocator.startCameraStream(lens, brightness, sharpness)) {
                             return@get call.respondText("No frame", status = HttpStatusCode.ServiceUnavailable)
                         }
                         val bytes = com.stremer.di.ServiceLocator.nextCameraFrame(1500)
@@ -152,22 +155,33 @@ object Server {
                         if (!com.stremer.di.ServiceLocator.isCameraEnabled()) {
                             return@get call.respondText("Camera disabled", status = HttpStatusCode.Forbidden)
                         }
-                        val ok = com.stremer.di.ServiceLocator.startCameraStream()
+                        val lens = call.request.queryParameters["lens"]
+                        val brightness = call.request.queryParameters["brightness"]?.toIntOrNull()
+                        val sharpness = call.request.queryParameters["sharpness"]?.toIntOrNull()
+
+                        val ok = com.stremer.di.ServiceLocator.startCameraStream(lens, brightness, sharpness)
                         if (!ok) return@get call.respondText("Camera error", status = HttpStatusCode.ServiceUnavailable)
 
                         val boundary = "frame"
                         call.respondBytesWriter(ContentType.parse("multipart/x-mixed-replace; boundary=$boundary")) {
                             try {
+                                var consecutiveNulls = 0
                                 while (true) {
-                                    val frame = com.stremer.di.ServiceLocator.nextCameraFrame(1500) ?: continue
+                                    val frame = com.stremer.di.ServiceLocator.nextCameraFrame(1500)
+                                    if (frame == null) {
+                                        consecutiveNulls++
+                                        if (consecutiveNulls > 3) break
+                                        continue
+                                    }
+                                    consecutiveNulls = 0
                                     val header = "--$boundary\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.size}\r\n\r\n"
                                     writeFully(header.encodeToByteArray())
                                     writeFully(frame)
                                     writeFully("\r\n".encodeToByteArray())
                                     flush()
                                 }
-                            } catch (_: Throwable) {
-                                // client disconnected
+                            } catch (e: Throwable) {
+                                android.util.Log.d("Server", "Camera stream ended: ${e.message}")
                             } finally {
                                 try { com.stremer.di.ServiceLocator.stopCameraStream() } catch (_: Exception) { }
                             }

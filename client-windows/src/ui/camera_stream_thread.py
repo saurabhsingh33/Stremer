@@ -1,24 +1,38 @@
 import requests
+from urllib.parse import urlencode
 from PyQt6 import QtCore
 
 class CameraStreamThread(QtCore.QThread):
     frame = QtCore.pyqtSignal(bytes)
     error = QtCore.pyqtSignal(str)
+    status = QtCore.pyqtSignal(str)
 
-    def __init__(self, base_url: str, headers: dict[str, str] | None = None, parent=None):
+    def __init__(self, base_url: str, headers: dict[str, str] | None = None, params: dict | None = None, parent=None):
         super().__init__(parent)
         self.base_url = base_url.rstrip('/')
         self.headers = headers or {}
+        self.params = params or {}
         self._running = True
+        self._response = None
+        self._suppress_errors = False
 
-    def stop(self):
+    def stop(self, suppress_errors=False):
         self._running = False
+        self._suppress_errors = suppress_errors
+        try:
+            if self._response:
+                self._response.close()
+        except Exception:
+            pass
 
     def run(self):
-        url = f"{self.base_url}/camera/stream"
+        query = urlencode({k: v for k, v in self.params.items() if v is not None})
+        url = f"{self.base_url}/camera/stream" + (f"?{query}" if query else "")
         boundary = b"--frame"
         try:
-            with requests.get(url, headers=self.headers, stream=True, timeout=10) as resp:
+            self._response = requests.get(url, headers=self.headers, stream=True, timeout=10)
+            self._response.raise_for_status()
+            with self._response as resp:
                 resp.raise_for_status()
                 buf = b""
                 for chunk in resp.iter_content(chunk_size=4096):
@@ -66,7 +80,12 @@ class CameraStreamThread(QtCore.QThread):
                         # Move buffer past this frame and trailing CRLF
                         buf = buf[frame_start+length+2:]
         except Exception as e:
-            try:
-                self.error.emit(str(e))
-            except Exception:
-                pass
+            if not self._suppress_errors and self._running:
+                try:
+                    # Don't show raw errors, use friendly messages
+                    if "NoneType" in str(e) or "read" in str(e).lower():
+                        self.status.emit("Reconnecting...")
+                    else:
+                        self.error.emit(str(e))
+                except Exception:
+                    pass

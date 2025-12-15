@@ -10,6 +10,8 @@ import android.view.Surface
 import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Minimal camera helper to capture a single JPEG frame on demand.
@@ -25,13 +27,23 @@ class CameraStreamer(private val activity: Activity) {
     @Volatile private var handler: Handler? = null
     private val frameQueue: java.util.concurrent.LinkedBlockingQueue<ByteArray> = java.util.concurrent.LinkedBlockingQueue(2)
 
-    fun start(): Boolean {
-        if (cameraDevice != null) return true
-        val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
-            val chars = cameraManager.getCameraCharacteristics(id)
-            val lensFacing = chars.get(CameraCharacteristics.LENS_FACING)
-            lensFacing == CameraCharacteristics.LENS_FACING_BACK
-        } ?: cameraManager.cameraIdList.firstOrNull() ?: return false
+    private var currentCameraId: String? = null
+    private var currentLens: String? = null
+    private var currentBrightness: Int? = null
+    private var currentSharpness: Int? = null
+
+    fun start(lens: String? = null, brightness: Int? = null, sharpness: Int? = null): Boolean {
+        val targetLens = lens?.lowercase()
+        val needsReopen = cameraDevice == null || currentLens != targetLens || currentBrightness != brightness || currentSharpness != sharpness
+        if (!needsReopen) return true
+
+        stop()
+
+        val cameraId = pickCameraId(targetLens) ?: return false
+        currentCameraId = cameraId
+        currentLens = targetLens
+        currentBrightness = brightness
+        currentSharpness = sharpness
 
         try {
             handlerThread = HandlerThread("stremer-camera").also { it.start() }
@@ -62,6 +74,8 @@ class CameraStreamer(private val activity: Activity) {
                                 set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                                 set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                                 set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_OFF)
+                                applyExposureCompensation(this, characteristics)
+                                applySharpness(this, characteristics)
                                 set(CaptureRequest.JPEG_ORIENTATION, getJpegOrientation(characteristics))
                             }.build(), object : CameraCaptureSession.CaptureCallback() {}, handler)
                         }
@@ -83,6 +97,8 @@ class CameraStreamer(private val activity: Activity) {
                                         set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                                         set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
                                         set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_OFF)
+                                        applyExposureCompensation(this, characteristics)
+                                        applySharpness(this, characteristics)
                                         set(CaptureRequest.JPEG_ORIENTATION, getJpegOrientation(characteristics))
                                     }
                                     sess.capture(req.build(), object : CameraCaptureSession.CaptureCallback() {}, handler)
@@ -137,5 +153,46 @@ class CameraStreamer(private val activity: Activity) {
         } else {
             (sensorOrientation + deviceDegrees) % 360
         }
+    }
+
+    private fun pickCameraId(lens: String?): String? {
+        val list = cameraManager.cameraIdList
+        val back = list.firstOrNull { id ->
+            val chars = cameraManager.getCameraCharacteristics(id)
+            chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        }
+        val front = list.firstOrNull { id ->
+            val chars = cameraManager.getCameraCharacteristics(id)
+            chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+        }
+        return when (lens) {
+            "front" -> front ?: back ?: list.firstOrNull()
+            "back" -> back ?: front ?: list.firstOrNull()
+            else -> back ?: list.firstOrNull()
+        }
+    }
+
+    private fun applyExposureCompensation(builder: CaptureRequest.Builder, characteristics: CameraCharacteristics) {
+        val target = currentBrightness ?: return
+        val range = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE) ?: return
+        val maxAbs = maxOf(abs(range.lower), abs(range.upper))
+        if (maxAbs == 0) return
+        val percent = target.coerceIn(-100, 100)
+        val comp = ((percent / 100.0) * maxAbs).roundToInt().coerceIn(range.lower, range.upper)
+        builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, comp)
+    }
+
+    private fun applySharpness(builder: CaptureRequest.Builder, characteristics: CameraCharacteristics) {
+        val target = currentSharpness ?: return
+        val modes = characteristics.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES) ?: return
+        val pct = target.coerceIn(0, 100)
+        val desired = when {
+            pct <= 10 && modes.contains(CaptureRequest.EDGE_MODE_OFF) -> CaptureRequest.EDGE_MODE_OFF
+            pct <= 60 && modes.contains(CaptureRequest.EDGE_MODE_FAST) -> CaptureRequest.EDGE_MODE_FAST
+            modes.contains(CaptureRequest.EDGE_MODE_HIGH_QUALITY) -> CaptureRequest.EDGE_MODE_HIGH_QUALITY
+            modes.contains(CaptureRequest.EDGE_MODE_FAST) -> CaptureRequest.EDGE_MODE_FAST
+            else -> null
+        }
+        desired?.let { builder.set(CaptureRequest.EDGE_MODE, it) }
     }
 }

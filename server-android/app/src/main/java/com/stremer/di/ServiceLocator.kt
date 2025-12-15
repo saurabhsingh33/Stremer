@@ -63,9 +63,9 @@ object ServiceLocator {
         rootSetFlow.value = isRootSet()
     }
 
-    fun cameraSnapshot(): ByteArray? {
+    fun cameraSnapshot(lens: String? = null, brightness: Int? = null, sharpness: Int? = null): ByteArray? {
         if (!cameraEnabled) return null
-        val ok = startCameraStream()
+        val ok = startCameraStream(lens, brightness, sharpness)
         if (!ok) return null
         val frame = nextCameraFrame(1500)
         if (frame == null) {
@@ -191,9 +191,9 @@ object ServiceLocator {
         return cameraStreamer!!
     }
 
-    fun startCameraStream(): Boolean {
+    fun startCameraStream(lens: String? = null, brightness: Int? = null, sharpness: Int? = null): Boolean {
         if (!cameraEnabled) return false
-        return ensureCamera().start()
+        return ensureCamera().start(lens, brightness, sharpness)
     }
 
     fun nextCameraFrame(timeoutMs: Long = 1000): ByteArray? {
