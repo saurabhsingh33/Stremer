@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter, QInputDialog, QProgressDialog
-from PyQt6.QtGui import QAction, QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from api.client import APIClient
@@ -85,6 +85,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Stremer - Windows Client")
         self.resize(1200, 800)
+
+        # Set application/window icon from repo root app.ico if available
+        try:
+            here = Path(__file__).resolve()
+            candidates = [
+                here.parents[3] / "app.ico",                 # <repo>/app.ico
+                here.parents[2] / "app.ico",                 # <client-windows>/app.ico (fallback)
+                here.parents[2] / "assets" / "app.ico",     # <client-windows>/assets/app.ico (fallback)
+            ]
+            for p in candidates:
+                if p.exists():
+                    self.setWindowIcon(QIcon(str(p)))
+                    break
+        except Exception:
+            pass
 
         self.api_client: APIClient | None = None
         self._open_image_views: list[ImageViewer] = []

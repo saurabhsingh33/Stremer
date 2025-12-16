@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from PyQt6.QtCore import QRectF, Qt, QTimer
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QIcon
 import json
 import math
 import os
@@ -54,6 +54,20 @@ class VisualizerWidget(QWidget):
 class MusicPlayer(QDialog):
     def __init__(self, url: str, token: str = None, display_name: str = None, parent=None, playlist=None, start_index=0, main_window=None, start_position: int = 0, auto_play: bool = True):
         super().__init__(parent)
+        # Set window icon from repo root app.ico if available
+        try:
+            here = Path(__file__).resolve()
+            candidates = [
+                here.parents[3] / "app.ico",
+                here.parents[2] / "app.ico",
+                here.parents[2] / "assets" / "app.ico",
+            ]
+            for p in candidates:
+                if p.exists():
+                    self.setWindowIcon(QIcon(str(p)))
+                    break
+        except Exception:
+            pass
 
         # Playlist support: each item is {url, token, display_name}
         self.playlist = playlist if playlist else [{"url": url, "token": token, "display_name": display_name or "Audio"}]
@@ -758,6 +772,20 @@ class MusicPlayer(QDialog):
 class MiniMusicPlayer(QDialog):
     def __init__(self, url: str, token: str = None, display_name: str = None, parent=None, start_position: int = 0, auto_play: bool = True, main_window=None, playlist=None, current_index: int = 0):
         super().__init__(parent)
+        # Set window icon from repo root app.ico if available
+        try:
+            here = Path(__file__).resolve()
+            candidates = [
+                here.parents[3] / "app.ico",
+                here.parents[2] / "app.ico",
+                here.parents[2] / "assets" / "app.ico",
+            ]
+            for p in candidates:
+                if p.exists():
+                    self.setWindowIcon(QIcon(str(p)))
+                    break
+        except Exception:
+            pass
         self.setWindowTitle("Mini Player")
         self.setMinimumSize(260, 120)
         self._always_on_top = True
