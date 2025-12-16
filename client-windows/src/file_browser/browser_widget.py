@@ -27,7 +27,7 @@ class BrowserWidget(QWidget):
     selection_changed = pyqtSignal(dict)
     selection_cleared = pyqtSignal()
 
-    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None, on_upload=None, on_camera=None):
+    def __init__(self, api_client, on_play, on_delete, on_copy, on_open=None, on_rename=None, on_properties=None, on_new_folder=None, on_new_file=None, on_open_with=None, on_upload=None, on_camera=None, on_play_mini=None):
         super().__init__()
         self.api_client = api_client
         self.on_play = on_play
@@ -41,6 +41,7 @@ class BrowserWidget(QWidget):
         self.on_open_with = on_open_with
         self.on_upload = on_upload
         self.on_camera = on_camera
+        self.on_play_mini = on_play_mini
         self.current_path = "/"
         self.view_mode = "list"  # list | icons | thumbnails
         self._net = QNetworkAccessManager(self)
@@ -123,6 +124,18 @@ class BrowserWidget(QWidget):
         self.clear_search_btn.clicked.connect(self._clear_search)
         toolbar_layout.addWidget(self.clear_search_btn)
 
+        # Mini Player button (shown when audio files exist)
+        self.mini_player_btn = QToolButton()
+        self.mini_player_btn.setText("🎵 Mini Player")
+        self.mini_player_btn.setToolTip("Play audio in mini player")
+        self.mini_player_btn.setFixedHeight(28)
+        self.mini_player_btn.setAutoRaise(True)
+        self.mini_player_btn.setStyleSheet(
+            "QToolButton { font-weight: bold; padding: 4px 10px; }"
+        )
+        self.mini_player_btn.clicked.connect(self._open_mini_player_for_first_audio)
+        self.mini_player_btn.setVisible(False)  # Hidden by default
+
         # Camera streaming button (added later to right side)
         self.camera_btn = QToolButton()
         self.camera_btn.setText("Camera")
@@ -159,7 +172,8 @@ class BrowserWidget(QWidget):
         toolbar_layout.addWidget(self.sort_order_btn)
 
         toolbar_layout.addStretch()
-        # Place camera button at the far right
+        # Place mini player and camera buttons at the far right
+        toolbar_layout.addWidget(self.mini_player_btn)
         toolbar_layout.addWidget(self.camera_btn)
         layout.addLayout(toolbar_layout)
         # List (table) view
@@ -292,6 +306,11 @@ class BrowserWidget(QWidget):
         self._last_search_items = None
         self._last_search_path = None
         items = self.api_client.list_files(path)
+
+        # Check if any audio files exist and update mini player button visibility
+        has_audio = any(item.get('type') == 'file' and self._is_audio(item.get('name', '').lower()) for item in items)
+        self.mini_player_btn.setVisible(has_audio)
+
         # Clear selections
         self.table.clearSelection()
         self.icon_list.clearSelection()
@@ -469,10 +488,14 @@ class BrowserWidget(QWidget):
         if item:
             if item["type"] == "file":
                 name_lower = item["name"].lower()
-                if self._is_video(name_lower):
+                is_audio = self._is_audio(name_lower)
+                is_video = self._is_video(name_lower)
+                if is_video:
                     menu.addAction("Play in VLC")
-                else:
-                    menu.addAction("Open")
+                if is_audio and self.on_play_mini:
+                    menu.addAction("Play in Mini Player")
+                # Always include Open for files
+                menu.addAction("Open")
 
                 # Add "Open With" submenu
                 if self.on_open_with:
@@ -506,6 +529,8 @@ class BrowserWidget(QWidget):
                 name_lower = item["name"].lower()
                 if act.text() == "Play in VLC" and item["type"] == "file" and self._is_video(name_lower):
                     self.on_play(item["path"])
+                elif act.text() == "Play in Mini Player" and item["type"] == "file" and self._is_audio(name_lower) and self.on_play_mini:
+                    self.on_play_mini(item["path"])
                 elif act.text() == "Open" and item["type"] == "file" and self.on_open:
                     print(f"DEBUG browser_widget: About to call on_open({item['path']})")
                     self.on_open(item["path"])
@@ -531,10 +556,14 @@ class BrowserWidget(QWidget):
         if data:
             if data["type"] == "file":
                 name_lower = data["name"].lower()
-                if self._is_video(name_lower):
+                is_audio = self._is_audio(name_lower)
+                is_video = self._is_video(name_lower)
+                if is_video:
                     menu.addAction("Play in VLC")
-                else:
-                    menu.addAction("Open")
+                if is_audio and self.on_play_mini:
+                    menu.addAction("Play in Mini Player")
+                # Always include Open for files
+                menu.addAction("Open")
 
                 # Add "Open With" submenu
                 if self.on_open_with:
@@ -568,6 +597,8 @@ class BrowserWidget(QWidget):
                 name_lower = data["name"].lower()
                 if act.text() == "Play in VLC" and data["type"] == "file" and self._is_video(name_lower):
                     self.on_play(data["path"])
+                elif act.text() == "Play in Mini Player" and data["type"] == "file" and self._is_audio(name_lower) and self.on_play_mini:
+                    self.on_play_mini(data["path"])
                 elif act.text() == "Open" and data["type"] == "file" and self.on_open:
                     print(f"DEBUG browser_widget (icons): About to call on_open({data['path']})")
                     self.on_open(data["path"])
@@ -587,6 +618,32 @@ class BrowserWidget(QWidget):
                     self.on_new_file(self.current_path)
 
         print("DEBUG browser_widget: _open_context_menu_icons completed")
+
+    def _open_mini_player_for_first_audio(self):
+        """Open the first audio file in the current directory in mini player"""
+        if not self.on_play_mini:
+            return
+        # Find first audio file
+        if self.view_mode == "list":
+            for row in range(self.table.rowCount()):
+                item_widget = self.table.item(row, 0)
+                if item_widget:
+                    item_data = item_widget.data(Qt.ItemDataRole.UserRole)
+                    if item_data and item_data.get("type") == "file":
+                        name_lower = item_data.get("name", "").lower()
+                        if self._is_audio(name_lower):
+                            self.on_play_mini(item_data["path"])
+                            return
+        else:
+            for i in range(self.icon_list.count()):
+                item_widget = self.icon_list.item(i)
+                if item_widget:
+                    item_data = item_widget.data(Qt.ItemDataRole.UserRole)
+                    if item_data and item_data.get("type") == "file":
+                        name_lower = item_data.get("name", "").lower()
+                        if self._is_audio(name_lower):
+                            self.on_play_mini(item_data["path"])
+                            return
 
     def _open_camera(self):
         if self.on_camera:
@@ -613,6 +670,11 @@ class BrowserWidget(QWidget):
     def _is_video(self, name_lower: str) -> bool:
         return name_lower.endswith((
             ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".3gp", ".ts"
+        ))
+
+    def _is_audio(self, name_lower: str) -> bool:
+        return name_lower.endswith((
+            ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma", ".opus"
         ))
 
     def _on_selection_changed(self):

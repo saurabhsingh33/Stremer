@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self.api_client: APIClient | None = None
         self._open_image_views: list[ImageViewer] = []
         self._open_music_players: list[MusicPlayer] = []
+        self._open_mini_players = []
         self._current_login_thread: QThread | None = None
 
         # Enable drag and drop
@@ -148,7 +149,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.container)
 
         # Browser (initialize without API client; will be set after login)
-        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with, on_upload=self._upload, on_camera=self._open_camera_stream)
+        self.browser = BrowserWidget(api_client=None, on_play=self._play, on_delete=self._delete, on_copy=self._copy, on_open=self._open_default, on_rename=self._rename, on_properties=self._show_properties, on_new_folder=self._new_folder, on_new_file=self._new_file, on_open_with=self._open_with, on_upload=self._upload, on_camera=self._open_camera_stream, on_play_mini=self._open_mini_player)
         self.browser.path_changed.connect(self._update_nav_actions)
         self.splitter.addWidget(self.browser)
         # Ensure initial view mode matches combobox selection (Thumbnails)
@@ -771,6 +772,20 @@ class MainWindow(QMainWindow):
 
                 print(f"Opening audio playlist with {len(playlist)} tracks, starting at index {current_index}")
 
+                # Reuse existing full player if open
+                if self._open_music_players:
+                    player = self._open_music_players[0]
+                    player.load_playlist_and_play(playlist, current_index)
+                    self.statusBar().showMessage("Playing in existing music player…", 2000)
+                    return
+
+                # Otherwise reuse existing mini player if present
+                if self._open_mini_players:
+                    mini = self._open_mini_players[0]
+                    mini.load_playlist_and_play(playlist, current_index)
+                    self.statusBar().showMessage("Playing in existing mini player…", 2000)
+                    return
+
                 # Create MusicPlayer with playlist and starting index
                 player = MusicPlayer(
                     playlist[current_index]["url"],
@@ -778,7 +793,8 @@ class MainWindow(QMainWindow):
                     playlist[current_index]["display_name"],
                     parent=None,
                     playlist=playlist,
-                    start_index=current_index
+                    start_index=current_index,
+                    main_window=self
                 )
                 player.setModal(False)
                 player.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -978,6 +994,50 @@ class MainWindow(QMainWindow):
         return name_lower.endswith((
             ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma", ".opus"
         ))
+
+    def _open_mini_player_dialog(self):
+        """Open a dialog to select an audio file and play in mini player"""
+        if not self.api_client:
+            return
+        self.statusBar().showMessage("Select an audio file to play in mini player", 3000)
+
+    def _open_mini_player(self, path: str):
+        """Open an audio file in the mini player instead of full player"""
+        if not self.api_client:
+            return
+        try:
+            from ui.music_player import MiniMusicPlayer
+            url = self.api_client.stream_url(path)
+            token = self.api_client.token if self.api_client.token else None
+            display_name = os.path.basename(path).lstrip('/') or None
+
+            playlist = [{"url": url, "token": token, "display_name": display_name}]
+
+            print(f"MiniMusicPlayer: opening {path}")
+            print(f"MiniMusicPlayer: url={url}")
+            # Reuse existing mini player if available
+            if self._open_mini_players:
+                mini = self._open_mini_players[0]
+                mini.load_playlist_and_play(playlist, 0)
+                self.statusBar().showMessage("Playing in existing mini player…", 2000)
+                return
+
+            mini = MiniMusicPlayer(url, token, display_name, parent=None, main_window=self, playlist=playlist, current_index=0)
+            mini.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            mini.show()
+            self._open_mini_players.append(mini)
+            def _cleanup_mini():
+                try:
+                    self._open_mini_players.remove(mini)
+                except ValueError:
+                    pass
+            mini.destroyed.connect(lambda *_: _cleanup_mini())
+            self.statusBar().showMessage("Opening mini player…", 2000)
+        except Exception as e:
+            print(f"MiniMusicPlayer error: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Open failed", f"Could not open audio: {e}")
 
     def _delete(self, path: str):
         if not self.api_client:
