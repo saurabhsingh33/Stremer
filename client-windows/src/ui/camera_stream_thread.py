@@ -1,4 +1,5 @@
 import requests
+from requests import exceptions as req_exc
 from urllib.parse import urlencode
 from PyQt6 import QtCore
 
@@ -79,6 +80,24 @@ class CameraStreamThread(QtCore.QThread):
                             pass
                         # Move buffer past this frame and trailing CRLF
                         buf = buf[frame_start+length+2:]
+        except req_exc.HTTPError as e:
+            if not self._suppress_errors and self._running:
+                try:
+                    status = None
+                    try:
+                        status = e.response.status_code if e.response is not None else None
+                    except Exception:
+                        status = None
+                    if status == 403:
+                        self.error.emit("Camera access is disabled on the server. Enable it on the mobile device to access the camera.")
+                    elif status == 401:
+                        self.error.emit("Unauthorized. Please login again to access the camera.")
+                    elif status == 404:
+                        self.error.emit("Camera stream not found on the server.")
+                    else:
+                        self.error.emit(str(e))
+                except Exception:
+                    pass
         except Exception as e:
             if not self._suppress_errors and self._running:
                 try:

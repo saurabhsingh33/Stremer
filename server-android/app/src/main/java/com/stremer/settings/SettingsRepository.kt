@@ -18,16 +18,40 @@ object SettingsRepository {
 
     fun init(context: Context) {
         if (prefs != null) return
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        prefs = EncryptedSharedPreferences.create(
-            context,
-            PREFS_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+
+        try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            prefs = EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            // If encrypted prefs fail (corrupt keystore, etc.), delete and retry with plain prefs
+            android.util.Log.e("SettingsRepository", "EncryptedSharedPreferences failed, falling back to plain", e)
+            try {
+                context.deleteSharedPreferences(PREFS_NAME)
+                // Retry with encrypted prefs after cleanup
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                prefs = EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_NAME,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (retryException: Exception) {
+                android.util.Log.e("SettingsRepository", "Retry failed, using plain SharedPreferences", retryException)
+                // Last resort: use plain SharedPreferences
+                prefs = context.getSharedPreferences(PREFS_NAME + "_plain", Context.MODE_PRIVATE)
+            }
+        }
     }
 
     private fun requirePrefs(): android.content.SharedPreferences {
