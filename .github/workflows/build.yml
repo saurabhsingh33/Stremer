@@ -1,0 +1,139 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-windows:
+    name: Build Windows Client (EXE)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: client-windows
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Disable Windows Defender
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
+      - name: Build PyInstaller executable
+        working-directory: client-windows
+        run: |
+          pyinstaller stremer.spec --noconfirm
+
+      - name: Build NSIS installer
+        working-directory: client-windows
+        run: |
+          & "C:\Program Files (x86)\NSIS\makensis.exe" installer\Stremer-Setup.nsi
+
+      - name: Re-enable Windows Defender
+        if: always()
+        run: Set-MpPreference -DisableRealtimeMonitoring $false
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-exe
+          path: client-windows/installer/Stremer-Setup.exe
+
+  build-android:
+    name: Build Android Server (APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for Gradle
+        working-directory: server-android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: server-android
+        run: ./gradlew assembleDebug
+
+      - name: Build release APK (unsigned)
+        working-directory: server-android
+        run: ./gradlew assembleRelease
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: android-apk-debug
+          path: server-android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: android-apk-release
+          path: server-android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            windows-exe/Stremer-Setup.exe
+            android-apk-debug/app-debug.apk
+            android-apk-release/app-release-unsigned.apk
+          body: |
+            # Stremer Release
+
+            ## Downloads
+            - **Windows Client**: `Stremer-Setup.exe` - Installer for Windows 10/11
+            - **Android Server (Debug)**: `app-debug.apk` - For testing
+            - **Android Server (Release)**: `app-release-unsigned.apk` - For production
+
+            ## Installation
+
+            ### Windows
+            1. Download `Stremer-Setup.exe`
+            2. Double-click to install
+            3. Ensure VLC Media Player (64-bit) is installed
+
+            ### Android
+            1. Download the APK file
+            2. Enable "Unknown Sources" in Settings > Security
+            3. Open the APK to install
+            4. Launch the app and note the server URL
+
+            ## Changes
+            See [commit history](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }})
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
