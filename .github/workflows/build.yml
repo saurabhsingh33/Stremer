@@ -44,7 +44,7 @@ jobs:
       - name: Build NSIS installer
         working-directory: client-windows
         run: |
-          & "C:\Program Files (x86)\NSIS\makensis.exe" installer\Stremer-Setup.nsi
+          & "C:\Program Files (x86)\NSIS\makensis.exe" ".\installer\Stremer-Setup.nsi"
 
       - name: Re-enable Windows Defender
         if: always()
@@ -65,7 +65,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v3
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Grant execute permission for Gradle
