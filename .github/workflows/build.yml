@@ -41,10 +41,57 @@ jobs:
         run: |
           pyinstaller stremer.spec --noconfirm
 
+      - name: Generate NSIS script
+        working-directory: client-windows
+        shell: pwsh
+        run: |
+          $dist = Join-Path $PWD "dist\Stremer"
+          $outDir = Join-Path $PWD "installer"
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          $scriptPath = Join-Path $PWD "installer\Stremer-Setup.nsi"
+          $content = @"
+          !include "MUI2.nsh"
+          Name "Stremer Windows Client"
+          OutFile "$outDir\Stremer-Setup.exe"
+          InstallDir "$PROGRAMFILES64\Stremer"
+          RequestExecutionLevel admin
+          Var StartMenuFolder
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_STARTMENU Application $StartMenuFolder
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
+          !insertmacro MUI_LANGUAGE "English"
+
+          Section "Install"
+            SetOutPath "$INSTDIR"
+            File /r "$dist\*.*"
+            WriteUninstaller "$INSTDIR\Uninstall.exe"
+            !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
+              CreateDirectory "$SMPROGRAMS\$StartMenuFolder"
+              CreateShortCut "$SMPROGRAMS\$StartMenuFolder\Stremer.lnk" "$INSTDIR\Stremer.exe"
+              CreateShortCut "$SMPROGRAMS\$StartMenuFolder\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+            !insertmacro MUI_STARTMENU_WRITE_END
+            CreateShortCut "$DESKTOP\Stremer.lnk" "$INSTDIR\Stremer.exe"
+            DetailPrint "Installation complete!"
+          SectionEnd
+
+          Section "Uninstall"
+            !insertmacro MUI_STARTMENU_GETFOLDER Application $StartMenuFolder
+            RMDir /r "$SMPROGRAMS\$StartMenuFolder"
+            Delete "$DESKTOP\Stremer.lnk"
+            RMDir /r "$INSTDIR"
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Stremer"
+            DeleteRegKey HKLM "Software\Stremer"
+            DetailPrint "Uninstall complete!"
+          SectionEnd
+          "@
+          $content | Set-Content -Path $scriptPath -Encoding ascii
+
       - name: Build NSIS installer
         working-directory: client-windows
         run: |
-          $script = Join-Path $PWD "installer/Stremer-Setup.nsi"
+          $script = Join-Path $PWD "installer\Stremer-Setup.nsi"
           & "C:\Program Files (x86)\NSIS\makensis.exe" $script
 
       - name: Re-enable Windows Defender
