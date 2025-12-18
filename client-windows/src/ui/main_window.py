@@ -248,6 +248,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing info", "Please enter server URL.")
             return
 
+        # Warn user about disabled security before connecting
+        try:
+            warn = QMessageBox(dlg)
+            warn.setIcon(QMessageBox.Icon.Warning)
+            warn.setWindowTitle("Security Warning")
+            warn.setText("Authentication is disabled on the server. Anyone on your network may be able to access your shared content.")
+            warn.setInformativeText(
+                "Recommended: On your Android device, open Stremer > Settings > enable 'Require authentication' and set a username & password."
+            )
+            warn.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok)
+            ok_btn = warn.button(QMessageBox.StandardButton.Ok)
+            if ok_btn:
+                ok_btn.setText("Connect anyway")
+            cancel_btn = warn.button(QMessageBox.StandardButton.Cancel)
+            if cancel_btn:
+                cancel_btn.setText("Cancel")
+            choice = warn.exec()
+            if choice != QMessageBox.StandardButton.Ok:
+                return
+        except Exception:
+            # If QMessageBox customization fails, continue without blocking
+            pass
+
         # Show progress dialog while connecting
         progress = QProgressDialog("Connecting...", None, 0, 0, dlg)
         progress.setWindowModality(Qt.WindowModality.WindowModal)

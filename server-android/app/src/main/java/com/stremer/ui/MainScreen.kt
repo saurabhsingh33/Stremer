@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import com.stremer.api.Server
 import com.stremer.di.ServiceLocator
 import com.stremer.service.StremerServerService
+import com.stremer.settings.SettingsRepository
 
 @Composable
 fun MainScreen() {
@@ -85,6 +86,7 @@ fun MainScreen() {
         .fillMaxSize()
         .verticalScroll(scrollState)
         .padding(16.dp)) {
+        var showNoAuthWarning by remember { mutableStateOf(false) }
         // Compact header card with subtle entrance animation
         androidx.compose.animation.Crossfade(targetState = true) { _ ->
             Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)) {
@@ -122,8 +124,13 @@ fun MainScreen() {
                                 android.widget.Toast.LENGTH_SHORT
                             ).show()
                         } else {
-                            StremerServerService.start(context)
-                            serverRunning = true
+                            // Warn if authentication is disabled
+                            if (!SettingsRepository.isAuthEnabled()) {
+                                showNoAuthWarning = true
+                            } else {
+                                StremerServerService.start(context)
+                                serverRunning = true
+                            }
                         }
                     }
                 }
@@ -178,6 +185,27 @@ fun MainScreen() {
                     Text(text = "Start the server to obtain the LAN address", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
                 }
             }
+        }
+
+        // Security warning dialog when starting server without authentication
+        if (showNoAuthWarning) {
+            AlertDialog(
+                onDismissRequest = { showNoAuthWarning = false },
+                title = { Text("Security Warning") },
+                text = {
+                    Text("Authentication is disabled. Anyone on your network may access your shared files.\n\nRecommended: Open Settings and enable 'Require authentication', then set a username and password.")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showNoAuthWarning = false
+                        StremerServerService.start(context)
+                        serverRunning = true
+                    }) { Text("Start anyway") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showNoAuthWarning = false }) { Text("Cancel") }
+                }
+            )
         }
         Spacer(modifier = Modifier.height(8.dp))
         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))) {
