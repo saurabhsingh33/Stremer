@@ -49,10 +49,10 @@ jobs:
           $outDir = Join-Path $PWD "installer"
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
           $scriptPath = Join-Path $PWD "installer\Stremer-Setup.nsi"
-          $content = @"
+          $content = @'
           !include "MUI2.nsh"
           Name "Stremer Windows Client"
-          OutFile "$outDir\Stremer-Setup.exe"
+          OutFile "__OUTDIR__\Stremer-Setup.exe"
           InstallDir "$PROGRAMFILES64\Stremer"
           RequestExecutionLevel admin
           Var StartMenuFolder
@@ -65,7 +65,7 @@ jobs:
 
           Section "Install"
             SetOutPath "$INSTDIR"
-            File /r "$dist\*.*"
+            File /r "__DIST__\*.*"
             WriteUninstaller "$INSTDIR\Uninstall.exe"
             !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
               CreateDirectory "$SMPROGRAMS\$StartMenuFolder"
@@ -85,7 +85,8 @@ jobs:
             DeleteRegKey HKLM "Software\Stremer"
             DetailPrint "Uninstall complete!"
           SectionEnd
-          "@
+          '@
+          $content = $content.Replace('__OUTDIR__', $outDir).Replace('__DIST__', $dist)
           $content | Set-Content -Path $scriptPath -Encoding ascii
 
       - name: Build NSIS installer
@@ -106,6 +107,7 @@ jobs:
 
   build-android:
     name: Build Android Server (APK)
+    needs: build-windows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
