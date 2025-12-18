@@ -634,7 +634,27 @@ class MusicPlayer(QDialog):
             "-" ,
         ]
         try:
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            startupinfo = None
+            creationflags = 0
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                try:
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                except Exception:
+                    pass
+                # Prevent creating a console window for ffmpeg on Windows
+                try:
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                except Exception:
+                    creationflags = 0
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+            )
         except Exception:
             return
         stop_event = threading.Event()
