@@ -44,7 +44,8 @@ jobs:
       - name: Build NSIS installer
         working-directory: client-windows
         run: |
-          & "C:\Program Files (x86)\NSIS\makensis.exe" ".\installer\Stremer-Setup.nsi"
+          $script = Join-Path $PWD "installer/Stremer-Setup.nsi"
+          & "C:\Program Files (x86)\NSIS\makensis.exe" $script
 
       - name: Re-enable Windows Defender
         if: always()
