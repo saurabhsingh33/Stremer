@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter, QInputDialog, QProgressDialog
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QToolBar, QStatusBar, QFileDialog, QMessageBox, QComboBox, QSplitter, QInputDialog, QProgressDialog, QSizePolicy
 from PyQt6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -138,6 +138,16 @@ class MainWindow(QMainWindow):
         self.refresh_action.triggered.connect(self._refresh)
         toolbar.addAction(self.refresh_action)
 
+        # Add spacer to push About to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+
+        # About action on the right
+        self.about_action = QAction("About", self)
+        self.about_action.triggered.connect(self._show_about)
+        toolbar.addAction(self.about_action)
+
         # View mode selector
         self.view_combo = QComboBox(self)
         self.view_combo.addItems(["List", "Icons", "Thumbnails"])
@@ -148,7 +158,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.view_combo)
 
         # Central container: start screen + splitter
-        from PyQt6.QtWidgets import QWidget, QStackedLayout, QLabel
+        from PyQt6.QtWidgets import QStackedLayout, QLabel
         self.container = QWidget()
         self._central_layout = QVBoxLayout(self.container)
 
@@ -438,6 +448,14 @@ class MainWindow(QMainWindow):
             self.splitter.show()
         except Exception:
             pass
+
+    def _show_about(self):
+        try:
+            from ui.about_dialog import AboutDialog
+            dlg = AboutDialog(self)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.information(self, "About", f"About dialog unavailable: {e}")
 
     def _on_image_saved(self, saved_path: str):
         """Called when an image is saved from the image viewer."""
