@@ -121,15 +121,31 @@ jobs:
         working-directory: server-android
         run: chmod +x gradlew
 
-      - name: Build release APK (unsigned)
+      - name: Prepare Android signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 secret is not set" >&2
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > server-android/keystore.jks
+          ls -l server-android/keystore.jks
+
+      - name: Build release APK (signed)
         working-directory: server-android
-        run: ./gradlew assembleRelease
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/server-android/keystore.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew clean assembleRelease --stacktrace
 
       - name: Rename release APK
         working-directory: server-android
-        run: mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/Stremer-server.apk
+        run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/Stremer-server.apk
 
-      - name: Upload release APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk-release

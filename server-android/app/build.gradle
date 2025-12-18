@@ -16,6 +16,29 @@ android {
         versionName "1.1.0"
     }
 
+    signingConfigs {
+        release {
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (ksPath == null || ksPath.isEmpty()) {
+                ksPath = project.rootDir.toPath().resolve("server-android/keystore.jks").toString()
+            }
+            storeFile file(ksPath)
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: project.findProperty("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: project.findProperty("ANDROID_KEY_ALIAS")
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: project.findProperty("ANDROID_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            // default debug signing
+        }
+    }
+
     buildFeatures {
         compose true
     }
