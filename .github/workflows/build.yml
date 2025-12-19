@@ -58,14 +58,21 @@ jobs:
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          # Find signtool using vswhere
-          $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswherePath -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          $signtool = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          # Find signtool - prefer x64 version from Windows Kits
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
 
-          # Fallback to Windows Kits if not found in VS
+          # Fallback to x86 version if x64 not found
           if (-not $signtool) {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x86\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          # Fallback to VS installation if still not found
+          if (-not $signtool) {
+            $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (Test-Path $vswherePath) {
+              $vsPath = & $vswherePath -latest -products * -property installationPath
+              $signtool = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter signtool.exe | Where-Object { $_.FullName -notmatch 'arm64' } | Select-Object -First 1 -ExpandProperty FullName
+            }
           }
 
           if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
@@ -135,14 +142,21 @@ jobs:
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          # Find signtool using vswhere
-          $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswherePath -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          $signtool = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          # Find signtool - prefer x64 version from Windows Kits
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
 
-          # Fallback to Windows Kits if not found in VS
+          # Fallback to x86 version if x64 not found
           if (-not $signtool) {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x86\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          # Fallback to VS installation if still not found
+          if (-not $signtool) {
+            $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (Test-Path $vswherePath) {
+              $vsPath = & $vswherePath -latest -products * -property installationPath
+              $signtool = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter signtool.exe | Where-Object { $_.FullName -notmatch 'arm64' } | Select-Object -First 1 -ExpandProperty FullName
+            }
           }
 
           if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
