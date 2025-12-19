@@ -179,7 +179,6 @@ jobs:
   build-android:
     name: Build Android Server (APK)
     runs-on: ubuntu-latest
-    if: false  # Temporarily disabled
     steps:
       - uses: actions/checkout@v4
 
@@ -225,7 +224,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-windows]
+    needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
