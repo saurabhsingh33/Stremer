@@ -48,11 +48,8 @@ class AboutDialog(QDialog):
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
 
-        layout.addWidget(QLabel(f"Windows Client\nVersion: {version.VERSION}"))
+        layout.addWidget(QLabel(f"Version: {version.VERSION}"))
 
-        link = QLabel("<a href='https://github.com/OWNER/REPO/releases'>Releases on GitHub</a>")
-        link.setOpenExternalLinks(True)
-        layout.addWidget(link)
 
         btns = QHBoxLayout()
         self.check_btn = QPushButton("Check for updates")

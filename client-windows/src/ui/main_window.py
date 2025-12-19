@@ -138,24 +138,24 @@ class MainWindow(QMainWindow):
         self.refresh_action.triggered.connect(self._refresh)
         toolbar.addAction(self.refresh_action)
 
-        # Add spacer to push About to the right
+
+        # Add spacer to push About and dropdown to the right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
-        # About action on the right
-        self.about_action = QAction("About", self)
-        self.about_action.triggered.connect(self._show_about)
-        toolbar.addAction(self.about_action)
-
-        # View mode selector
+        # View mode selector (dropdown) just left of About
         self.view_combo = QComboBox(self)
         self.view_combo.addItems(["List", "Icons", "Thumbnails"])
-        # Default to Thumbnails view
         self.view_combo.setCurrentIndex(2)
         self.view_combo.setToolTip("Change view mode")
         self.view_combo.currentTextChanged.connect(self._on_view_change)
         toolbar.addWidget(self.view_combo)
+
+        # About action on the extreme right
+        self.about_action = QAction("About", self)
+        self.about_action.triggered.connect(self._show_about)
+        toolbar.addAction(self.about_action)
 
         # Central container: start screen + splitter
         from PyQt6.QtWidgets import QStackedLayout, QLabel
