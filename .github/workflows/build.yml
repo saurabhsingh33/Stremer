@@ -41,6 +41,32 @@ jobs:
         run: |
           pyinstaller stremer.spec --noconfirm
 
+      - name: Prepare Windows code signing certificate
+        shell: pwsh
+        working-directory: client-windows
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+        run: |
+          if (-not $env:WINDOWS_CERT_PFX_BASE64) { Write-Error "WINDOWS_CERT_PFX_BASE64 secret not set"; exit 1 }
+          $pfxPath = Join-Path $PWD "signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          Write-Host "Wrote code signing certificate to $pfxPath"
+
+      - name: Install Windows SDK (signtool)
+        run: choco install windows-sdk -y
+
+      - name: Sign application EXE
+        shell: pwsh
+        working-directory: client-windows
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          $pfxPath = Join-Path $PWD "signing.pfx"
+          $exePath = Join-Path $PWD "dist\Stremer\Stremer.exe"
+          & $signtool sign /f $pfxPath /p "$env:WINDOWS_CERT_PASSWORD" /fd sha256 /td sha256 /tr http://timestamp.digicert.com "$exePath"
+
       - name: Generate NSIS script
         working-directory: client-windows
         shell: pwsh
@@ -94,6 +120,18 @@ jobs:
         run: |
           $script = Join-Path $PWD "installer\Stremer-Setup.nsi"
           & "C:\Program Files (x86)\NSIS\makensis.exe" $script
+
+      - name: Sign installer EXE
+        shell: pwsh
+        working-directory: client-windows
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          $pfxPath = Join-Path $PWD "signing.pfx"
+          $installerPath = Join-Path $PWD "installer\Stremer-Client-setup.exe"
+          & $signtool sign /f $pfxPath /p "$env:WINDOWS_CERT_PASSWORD" /fd sha256 /td sha256 /tr http://timestamp.digicert.com "$installerPath"
 
       - name: Re-enable Windows Defender
         if: always()
