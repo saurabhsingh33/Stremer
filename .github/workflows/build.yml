@@ -52,17 +52,25 @@ jobs:
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
           Write-Host "Wrote code signing certificate to $pfxPath"
 
-      - name: Install Windows SDK (signtool)
-        run: choco install windows-sdk -y
-
       - name: Sign application EXE
         shell: pwsh
         working-directory: client-windows
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          # Find signtool using vswhere
+          $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswherePath -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $signtool = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+
+          # Fallback to Windows Kits if not found in VS
+          if (-not $signtool) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          }
+
           if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          Write-Host "Using signtool: $signtool"
+
           $pfxPath = Join-Path $PWD "signing.pfx"
           $exePath = Join-Path $PWD "dist\Stremer\Stremer.exe"
           & $signtool sign /f $pfxPath /p "$env:WINDOWS_CERT_PASSWORD" /fd sha256 /td sha256 /tr http://timestamp.digicert.com "$exePath"
@@ -127,8 +135,19 @@ jobs:
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          # Find signtool using vswhere
+          $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswherePath -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $signtool = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+
+          # Fallback to Windows Kits if not found in VS
+          if (-not $signtool) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Select-Object -First 1 -ExpandProperty FullName
+          }
+
           if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          Write-Host "Using signtool: $signtool"
+
           $pfxPath = Join-Path $PWD "signing.pfx"
           $installerPath = Join-Path $PWD "installer\Stremer-Client-setup.exe"
           & $signtool sign /f $pfxPath /p "$env:WINDOWS_CERT_PASSWORD" /fd sha256 /td sha256 /tr http://timestamp.digicert.com "$installerPath"
@@ -146,6 +165,7 @@ jobs:
   build-android:
     name: Build Android Server (APK)
     runs-on: ubuntu-latest
+    if: false  # Temporarily disabled
     steps:
       - uses: actions/checkout@v4
 
@@ -191,7 +211,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-windows, build-android]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
