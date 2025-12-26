@@ -49,12 +49,12 @@ class FileStorageHelper(private val activity: Activity) {
         return if (target.exists()) target else null
     }
 
-    fun listFiles(path: String = ""): List<com.stremer.files.FileItem> {
+    fun listFiles(path: String = "", offset: Int = 0, limit: Int = Int.MAX_VALUE): List<com.stremer.files.FileItem> {
         val target = resolve(path) ?: return emptyList()
         if (!target.isDirectory) return emptyList()
 
         return try {
-            target.listFiles()?.mapNotNull { file ->
+            val items = target.listFiles()?.mapNotNull { file ->
                 try {
                     com.stremer.files.FileItem(
                         name = file.name,
@@ -67,6 +67,10 @@ class FileStorageHelper(private val activity: Activity) {
                     null
                 }
             } ?: emptyList()
+
+            // Apply pagination
+            val end = (offset + limit).coerceAtMost(items.size)
+            if (offset >= items.size) emptyList() else items.subList(offset, end)
         } catch (e: Exception) {
             android.util.Log.e("FileStorageHelper", "Error listing files: ${e.message}")
             emptyList()

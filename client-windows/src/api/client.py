@@ -13,11 +13,77 @@ class APIClient:
     def _headers(self):
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
-    def list_files(self, path: str = "/") -> List[Dict]:
+    def list_files(self, path: str = "/", offset: int | None = None, limit: int | None = None) -> List[Dict]:
         url = f"{self.base_url}/files"
-        resp = requests.get(url, params={"path": path}, headers=self._headers(), timeout=15)
+        params: Dict[str, object] = {"path": path}
+        if offset is not None:
+            params["offset"] = max(0, int(offset))
+        if limit is not None:
+            params["limit"] = max(1, int(limit))
+        resp = requests.get(url, params=params, headers=self._headers(), timeout=30)
         resp.raise_for_status()
         return resp.json().get("items", [])
+
+    def list_files_page(self, path: str = "/", offset: int = 0, limit: int = 100) -> tuple[list[Dict], int, int, int, Optional[str]]:
+        """Return (items, total, offset, limit, error) for paginated folder listing."""
+        url = f"{self.base_url}/files"
+        params = {"path": path, "offset": max(0, int(offset)), "limit": max(1, int(limit))}
+        resp = requests.get(url, params=params, headers=self._headers(), timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", [])
+        total = int(data.get("total", len(items)))
+        error = data.get("error")
+        return items, total, int(data.get("offset", offset)), int(data.get("limit", limit)), error
+
+    def stream_files(self, path: str = "/", on_item_callback=None, max_items: int = None, offset: int = 0):
+        """Stream files one by one from /files endpoint (NDJSON format).
+        Calls on_item_callback(item) for each item as it arrives.
+        Returns (error_message, has_more) tuple."""
+        url = f"{self.base_url}/files"
+        params = {"path": path}
+        if max_items:
+            params["limit"] = max_items
+        if offset > 0:
+            params["offset"] = offset
+        error = None
+        has_more = False
+        items_count = 0
+
+        try:
+            # Use stream=True to read the response line-by-line without loading it all into memory
+            resp = requests.get(url, params=params, headers=self._headers(), timeout=300, stream=True)
+            resp.raise_for_status()
+
+            # Read NDJSON (newline-delimited JSON) and emit items immediately
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    import json
+                    item = json.loads(line)
+                    if "error" in item:
+                        error = item["error"]
+                    elif on_item_callback:
+                        # Call callback immediately as item arrives from server
+                        # Callback can return False to stop streaming
+                        items_count += 1
+                        result = on_item_callback(item)
+                        if result is False:
+                            # Callback signaled to stop
+                            has_more = True
+                            break
+
+                        # Check if we've reached the limit
+                        if max_items and items_count >= max_items:
+                            has_more = True
+                            break
+                except json.JSONDecodeError:
+                    pass
+        except Exception as e:
+            error = str(e)
+
+        return error, has_more
 
     def search(self, path: str = "/", q: str | None = None, type_: str | None = None, size_min: int | None = None, size_max: int | None = None, modified_after: int | None = None, modified_before: int | None = None, limit: int = 200) -> List[Dict]:
         url = f"{self.base_url}/search"

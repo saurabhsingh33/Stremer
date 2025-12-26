@@ -92,13 +92,13 @@ class SafHelper(private val activity: Activity) {
         return current
     }
 
-    fun listFiles(path: String = ""): List<com.stremer.files.FileItem> {
-        android.util.Log.d("SafHelper", "listFiles called with path: '$path', rootUri: $rootUri")
+    fun listFiles(path: String = "", offset: Int = 0, limit: Int = Int.MAX_VALUE): List<com.stremer.files.FileItem> {
+        android.util.Log.d("SafHelper", "listFiles called with path: '$path', rootUri: $rootUri, offset: $offset, limit: $limit")
 
         // If at root and we have multiple roots, list root folders
         val cleaned = path.trim('/')
         if (cleaned.isEmpty() && roots.isNotEmpty()) {
-            return roots.keys.map { name ->
+            val rootItems = roots.keys.map { name ->
                 com.stremer.files.FileItem(
                     name = name,
                     type = "dir",
@@ -107,6 +107,8 @@ class SafHelper(private val activity: Activity) {
                     path = "/$name"
                 )
             }
+            val end = (offset + limit).coerceAtMost(rootItems.size)
+            return if (offset >= rootItems.size) emptyList() else rootItems.subList(offset, end)
         }
 
         val target = resolve(path)
@@ -117,7 +119,8 @@ class SafHelper(private val activity: Activity) {
         val files = target.listFiles()
         android.util.Log.d("SafHelper", "Found ${files.size} files")
         if (files.isEmpty()) return emptyList()
-        return files.mapNotNull { f ->
+
+        val items = files.mapNotNull { f ->
             try {
                 val name = f.name ?: "unknown"
                 val isDir = f.isDirectory
@@ -131,6 +134,59 @@ class SafHelper(private val activity: Activity) {
             } catch (e: Exception) {
                 android.util.Log.e("SafHelper", "Error processing file: ${e.message}")
                 null
+            }
+        }
+
+        // Apply pagination
+        val end = (offset + limit).coerceAtMost(items.size)
+        return if (offset >= items.size) emptyList() else items.subList(offset, end)
+    }
+
+    fun streamFiles(path: String = ""): Sequence<com.stremer.files.FileItem> {
+        // If at root and we have multiple roots, yield root folders first
+        val cleaned = path.trim('/')
+        if (cleaned.isEmpty() && roots.isNotEmpty()) {
+            return sequence {
+                for (name in roots.keys) {
+                    yield(com.stremer.files.FileItem(
+                        name = name,
+                        type = "dir",
+                        size = null,
+                        lastModified = null,
+                        path = "/$name"
+                    ))
+                }
+            }
+        }
+
+        val target = resolve(path)
+        if (target == null) {
+            android.util.Log.e("SafHelper", "Failed to resolve path for streaming: '$path'")
+            return emptySequence()
+        }
+
+        return sequence {
+            try {
+                val files = target.listFiles()
+                if (files.isEmpty()) return@sequence
+
+                for (f in files) {
+                    try {
+                        val name = f.name ?: "unknown"
+                        val isDir = f.isDirectory
+                        yield(com.stremer.files.FileItem(
+                            name = name,
+                            type = if (isDir) "dir" else "file",
+                            size = if (f.isFile) f.length() else null,
+                            lastModified = try { f.lastModified() } catch (_: Exception) { null },
+                            path = buildPath(cleaned, name)
+                        ))
+                    } catch (e: Exception) {
+                        android.util.Log.e("SafHelper", "Error processing file in stream: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SafHelper", "Stream error for path '$path': ${e.message}")
             }
         }
     }

@@ -35,7 +35,12 @@ android {
             signingConfig signingConfigs.release
         }
         debug {
-            // default debug signing
+            // Allow installing debug alongside release
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            debuggable true
+            // Distinguish app name for clarity
+            resValue "string", "app_name", "Stremer Server (Debug)"
         }
     }
 

@@ -15,13 +15,84 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QPushButton,
+    QProgressBar,
 )
-from PyQt6.QtCore import Qt, QPoint, QSize, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QSize, QUrl, pyqtSignal, QThread, QTimer
 from PyQt6.QtWidgets import QStyle
-from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QPixmap, QIcon, QCursor
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 
+class FileLoaderThread(QThread):
+    """Background thread for loading file lists to avoid blocking UI."""
+    items_received = pyqtSignal(list)  # Emits items progressively as they're loaded
+    load_complete = pyqtSignal(bool)  # Emits (has_more) when streaming completes or limit reached
+    error = pyqtSignal(str)  # Emits error message if failed
+
+    def __init__(self, api_client, path: str, limit: int = 100, offset: int = 0):
+        super().__init__()
+        self.api_client = api_client
+        self.path = path
+        self.limit = limit  # Max items to stream before stopping
+        self.offset = offset  # Skip this many items before streaming
+        self._cancelled = False
+        self._batch = []  # Buffer items in small batches for efficient UI updates
+        self._batch_size = 10  # Emit every 10 items
+        self._total_received = 0
+
+    def cancel(self):
+        self._cancelled = True
+
+    def _emit_batch(self):
+        """Emit buffered items and clear batch."""
+        if self._batch and not self._cancelled:
+            self.items_received.emit(self._batch[:])
+            self._batch.clear()
+
+    def _on_item(self, item):
+        """Callback when server sends an item."""
+        if self._cancelled:
+            return False  # Signal to stop streaming
+
+        self._total_received += 1
+        self._batch.append(item)
+
+        # Emit in small batches to avoid UI lag but keep responsiveness
+        if len(self._batch) >= self._batch_size:
+            self._emit_batch()
+
+        # Stop streaming if we've reached the limit
+        if self._total_received >= self.limit:
+            return False  # Signal to stop streaming
+
+        return True  # Continue streaming
+
+    def run(self):
+        try:
+            # Use streaming API with callback to emit items as they arrive
+            error, has_more = self.api_client.stream_files(
+                self.path,
+                on_item_callback=self._on_item,
+                max_items=self.limit,
+                offset=self.offset
+            )
+
+            if self._cancelled:
+                return
+
+            # Emit any remaining buffered items
+            self._emit_batch()
+
+            if error:
+                # Surface server-side error after streaming
+                self.error.emit(error)
+                return
+
+            if not self._cancelled:
+                self.load_complete.emit(has_more)
+        except Exception as e:
+            if not self._cancelled:
+                self.error.emit(str(e))
 class BrowserWidget(QWidget):
     path_changed = pyqtSignal(str)
     selection_changed = pyqtSignal(dict)
@@ -56,6 +127,14 @@ class BrowserWidget(QWidget):
         self._last_search_path: str | None = None
         self.sort_field = "name"  # name, date, size, type
         self.sort_ascending = True
+
+        # File loading thread and progressive rendering
+        self._loader_thread: FileLoaderThread | None = None
+        self._all_loaded_items = []  # All items loaded so far
+        self._is_loading = False
+        self._load_complete = False
+        self._has_more_items = False  # Track if more items are available
+        self._initial_load_limit = 100  # Load 100 items initially
 
         layout = QVBoxLayout(self)
 
@@ -176,6 +255,14 @@ class BrowserWidget(QWidget):
         toolbar_layout.addWidget(self.mini_player_btn)
         toolbar_layout.addWidget(self.camera_btn)
         layout.addLayout(toolbar_layout)
+
+        # Loading indicator
+        self.loading_label = QLabel("Loading files...")
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.setStyleSheet("QLabel { color: #666; font-size: 14px; padding: 20px; }")
+        self.loading_label.hide()
+        layout.addWidget(self.loading_label)
+
         # List (table) view
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Name", "Type", "Size"])
@@ -185,6 +272,8 @@ class BrowserWidget(QWidget):
         self.table.customContextMenuRequested.connect(self._open_context_menu)
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        # Connect scroll event for lazy loading
+        self.table.verticalScrollBar().valueChanged.connect(self._on_table_scroll)
 
         # Icon/thumbnail view
         self.icon_list = QListWidget()
@@ -197,6 +286,8 @@ class BrowserWidget(QWidget):
         self.icon_list.customContextMenuRequested.connect(self._open_context_menu_icons)
         self.icon_list.doubleClicked.connect(self._on_icon_double_click)
         self.icon_list.itemSelectionChanged.connect(self._on_selection_changed)
+        # Connect scroll event for lazy loading
+        self.icon_list.verticalScrollBar().valueChanged.connect(self._on_icon_scroll)
 
         layout.addWidget(self.table)
         layout.addWidget(self.icon_list)
@@ -297,30 +388,159 @@ class BrowserWidget(QWidget):
     def load_path(self, path: str = "/"):
         self.current_path = path
         if not self.api_client:
-            # No API client yet; clear view
+            # No API client yet; clear and hide views
             self.table.setRowCount(0)
             self.icon_list.clear()
+            self.table.hide()
+            self.icon_list.hide()
+            self.loading_label.hide()
+            self._is_loading = False
+            self._load_complete = False
             self.path_changed.emit(self.current_path)
             self.selection_cleared.emit()
             return
+
+        # Cancel any existing loader thread IMMEDIATELY
+        if self._loader_thread and self._loader_thread.isRunning():
+            self._loader_thread.cancel()
+            self._loader_thread.quit()
+            self._loader_thread.wait(100)  # Wait max 100ms, then force continue
+
+        # Reset state
+        self._all_loaded_items.clear()
+        self._is_loading = True
+        self._load_complete = False
+        self._has_more_items = False
+
+        # Clear search state
         self._last_search_items = None
         self._last_search_path = None
-        items = self.api_client.list_files(path)
 
-        # Check if any audio files exist and update mini player button visibility
-        has_audio = any(item.get('type') == 'file' and self._is_audio(item.get('name', '').lower()) for item in items)
-        self.mini_player_btn.setVisible(has_audio)
-
-        # Clear selections
+        # Clear current view
+        self.table.setRowCount(0)
+        self.icon_list.clear()
         self.table.clearSelection()
         self.icon_list.clearSelection()
-        if self.view_mode == "list":
-            self._render_table(items, self.current_path)
-        else:
-            self._render_icons(items, self.current_path)
-        # Notify listeners that path changed
+
+        # Show loading indicator prominently
+        self.loading_label.setText(f"Loading {path}...")
+        self.loading_label.show()
+
+        # Hide views while loading
+        self.table.hide()
+        self.icon_list.hide()
+
+        # Set cursor to wait
+        self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+
+        # Notify listeners that path has changed (updates nav buttons)
         self.path_changed.emit(self.current_path)
         self.selection_cleared.emit()
+
+        # Start background loading with initial limit
+        self._loader_thread = FileLoaderThread(self.api_client, path, limit=self._initial_load_limit)
+        self._loader_thread.items_received.connect(self._on_items_received)
+        self._loader_thread.load_complete.connect(self._on_load_complete)
+        self._loader_thread.error.connect(self._on_load_error)
+        self._loader_thread.start()
+
+    def _on_items_received(self, items: list):
+        """Called progressively as batches of items are loaded."""
+        # On first batch, hide loading indicator and show view
+        if len(self._all_loaded_items) == 0:
+            self.loading_label.hide()
+            if self.view_mode == "list":
+                self.table.show()
+                self.icon_list.hide()
+            else:
+                self.table.hide()
+                self.icon_list.show()
+
+        # Add new items to collection
+        self._all_loaded_items.extend(items)
+
+        # Just append new items without re-sorting (we'll sort on completion)
+        if self.view_mode == "list":
+            # Append new items to table
+            self._render_table_chunk(items, self.current_path)
+        else:
+            # Append new items to icon list
+            self._render_icons_chunk(items, self.current_path)
+            # Immediately prioritize visible thumbnails after rendering
+            if self.view_mode == "thumbnails":
+                QTimer.singleShot(0, self._load_visible_thumbnails)
+
+    def _on_load_complete(self, has_more: bool = False):
+        """Called when streaming completes or limit reached."""
+        self._is_loading = False
+        self._load_complete = not has_more  # Only truly complete if no more items
+        self._has_more_items = has_more
+        self.unsetCursor()
+
+    def _on_table_scroll(self, value):
+        """Called when table is scrolled - load more items if near bottom."""
+        if not self._has_more_items or self._is_loading:
+            return
+
+        scrollbar = self.table.verticalScrollBar()
+        # Load more when scrolled 80% to bottom
+        if scrollbar.maximum() > 0:
+            scroll_percentage = value / scrollbar.maximum()
+            if scroll_percentage > 0.8:
+                self._load_more_items()
+
+    def _on_icon_scroll(self, value):
+        """Called when icon list is scrolled - load more items if near bottom."""
+        # Load more file items if near bottom
+        if self._has_more_items and not self._is_loading:
+            scrollbar = self.icon_list.verticalScrollBar()
+            # Load more when scrolled 80% to bottom
+            if scrollbar.maximum() > 0:
+                scroll_percentage = value / scrollbar.maximum()
+                if scroll_percentage > 0.8:
+                    self._load_more_items()
+
+        # Also load thumbnails for newly visible items
+        if self.view_mode == "thumbnails":
+            self._load_visible_thumbnails()
+        """Load next batch of items when scrolled near bottom."""
+        if self._is_loading or self._load_complete:
+            return
+
+        # Cancel any existing thread first
+        if self._loader_thread and self._loader_thread.isRunning():
+            self._loader_thread.cancel()
+            self._loader_thread.quit()
+            self._loader_thread.wait(100)
+
+        self._is_loading = True
+        self.setCursor(Qt.CursorShape.WaitCursor)
+
+        # Load next batch (100 more items) starting from current offset
+        # We use offset = len(all_loaded_items) to skip items already loaded
+        offset = len(self._all_loaded_items)
+        self._loader_thread = FileLoaderThread(
+            self.api_client,
+            self.current_path,
+            limit=100,
+            offset=offset
+        )
+        self._loader_thread.items_received.connect(self._on_items_received)
+        self._loader_thread.load_complete.connect(self._on_load_complete)
+        self._loader_thread.error.connect(self._on_load_error)
+        self._loader_thread.start()
+
+    def _on_load_error(self, error_msg: str):
+        """Called when file loading fails."""
+        self._is_loading = False
+        self._load_complete = True
+        self.loading_label.setText(f"Error loading files: {error_msg}")
+        self.loading_label.show()
+        self.unsetCursor()
+        # Show empty view
+        self.table.show()
+        self.icon_list.hide()
+        self.table.setRowCount(0)
 
     def navigate_to(self, path: str):
         # Push current path to back history if not the same
@@ -360,9 +580,15 @@ class BrowserWidget(QWidget):
         self.navigate_to(parent)
 
     def _render_table(self, items, base_path: str):
+        """Legacy method - renders all items at once. Now replaced by chunked rendering."""
         self.table.setRowCount(0)
         sorted_items = self._sort_items(items)
-        for item in sorted_items:
+        self._render_table_chunk(sorted_items, base_path)
+        self.table.resizeColumnsToContents()
+
+    def _render_table_chunk(self, items, base_path: str):
+        """Render a chunk of items to the table view."""
+        for item in items:
             row = self.table.rowCount()
             self.table.insertRow(row)
             name = item.get("name", "")
@@ -377,15 +603,19 @@ class BrowserWidget(QWidget):
             size_text = self._fmt_size(item.get("size", None)) if item.get("type") == "file" else "-"
             self.table.setItem(row, 2, QTableWidgetItem(size_text))
             self.table.setRowHeight(row, 24)
-        self.table.resizeColumnsToContents()
 
     def _render_icons(self, items, base_path: str):
+        """Legacy method - renders all items at once. Now replaced by chunked rendering."""
         self.icon_list.clear()
+        sorted_items = self._sort_items(items)
+        self._render_icons_chunk(sorted_items, base_path)
+
+    def _render_icons_chunk(self, items, base_path: str):
+        """Render a chunk of items to the icon/thumbnail view."""
         style = self.style()
         folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-        sorted_items = self._sort_items(items)
-        for it in sorted_items:
+        for it in items:
             name = it.get("name", "")
             type_ = it.get("type", "file")
             size_val = it.get("size", None)
@@ -700,13 +930,51 @@ class BrowserWidget(QWidget):
         self._thumb_inflight.add(key)
 
         url = self.api_client.thumb_url(path, self.icon_list.iconSize().width(), self.icon_list.iconSize().height())
-        # Queue request; we'll limit concurrent downloads
-        self._thumb_pending.append((key, url))
+
+        # Check if item is currently visible in the view
+        is_visible = False
+        try:
+            rect = self.icon_list.visualItemRect(list_item)
+            viewport_rect = self.icon_list.viewport().rect()
+            is_visible = viewport_rect.intersects(rect)
+        except:
+            pass
+
+        # Priority queue: visible items go to front, others to back
+        if is_visible:
+            self._thumb_pending.insert(0, (key, url))  # Front of queue
+        else:
+            self._thumb_pending.append((key, url))  # Back of queue
+
         self._start_next_thumb()
 
+    def _load_visible_thumbnails(self):
+        """Load thumbnails for items currently visible (plus a small buffer) in the viewport."""
+        if self.view_mode != "thumbnails" or not self.api_client:
+            return
+
+        viewport_rect = self.icon_list.viewport().rect()
+        # Expand rect to prefetch thumbnails just below/above the viewport
+        buffer = viewport_rect.height() // 2
+        expanded_rect = viewport_rect.adjusted(0, -buffer, 0, buffer)
+
+        for i in range(self.icon_list.count()):
+            item = self.icon_list.item(i)
+            if not item:
+                continue
+
+            # Check if item is visible or near-visible
+            item_rect = self.icon_list.visualItemRect(item)
+            if expanded_rect.intersects(item_rect):
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if data and data.get("type") == "file":
+                    path = data.get("path")
+                    if path:
+                        self._load_thumbnail_async(item, path)
+
     def _start_next_thumb(self):
-        # Limit concurrent thumbnail fetches to reduce load on server/device
-        MAX_CONCURRENT = 4
+        # Limit concurrent thumbnail fetches; tuned higher to leverage >10 Mbps LAN
+        MAX_CONCURRENT = 32
         while self._thumb_active < MAX_CONCURRENT and self._thumb_pending:
             key, url = self._thumb_pending.pop(0)
 

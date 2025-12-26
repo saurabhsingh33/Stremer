@@ -1,6 +1,8 @@
 package com.stremer.api
 
 import com.stremer.di.ServiceLocator
+import com.stremer.api.FilesResponse
+import com.stremer.files.FileItem
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
@@ -83,22 +85,47 @@ object Server {
                 }
                 // login issues token (stored in ServiceLocator)
                 post("/auth/login") {
-                    val params = call.receiveParameters()
-                    val user = params["username"]
-                    val pass = params["password"]
-                    // If auth disabled, issue token regardless (or a fixed token)
-                    if (!com.stremer.auth.AuthManager.isEnabled() || ServiceLocator.validate(user, pass)) {
-                        ServiceLocator.issueTokenFor(user ?: "user")
-                        // Track client login with username and IP
-                        val ip = try {
-                            call.request.headers[io.ktor.http.HttpHeaders.XForwardedFor]
-                                ?.split(',')?.firstOrNull()?.trim()
-                                ?: call.request.local.remoteHost
-                        } catch (_: Exception) { "unknown" }
-                        recordClient(user, ip)
-                        call.respond(mapOf("token" to ServiceLocator.token))
-                    } else {
-                        call.respondText("Invalid credentials", status = HttpStatusCode.Unauthorized)
+                    try {
+                        // Accept both JSON and x-www-form-urlencoded bodies
+                        val contentType = call.request.headers[io.ktor.http.HttpHeaders.ContentType]?.lowercase()
+                        var user: String? = null
+                        var pass: String? = null
+
+                        if (contentType != null && contentType.contains("application/json")) {
+                            val json = runCatching { call.receive<Map<String, String>>() }.getOrNull()
+                            user = json?.get("username")
+                            pass = json?.get("password")
+                        }
+                        if (user == null || pass == null) {
+                            val params = runCatching { call.receiveParameters() }.getOrNull()
+                            user = user ?: params?.get("username")
+                            pass = pass ?: params?.get("password")
+                        }
+
+                        if (user.isNullOrBlank() || pass.isNullOrBlank()) {
+                            return@post call.respond(
+                                HttpStatusCode.BadRequest,
+                                mapOf("error" to "Missing username or password")
+                            )
+                        }
+
+                        // If auth disabled, issue token regardless (or a fixed token)
+                        if (!com.stremer.auth.AuthManager.isEnabled() || ServiceLocator.validate(user, pass)) {
+                            ServiceLocator.issueTokenFor(user ?: "user")
+                            // Track client login with username and IP
+                            val ip = try {
+                                call.request.headers[io.ktor.http.HttpHeaders.XForwardedFor]
+                                    ?.split(',')?.firstOrNull()?.trim()
+                                    ?: call.request.local.remoteHost
+                            } catch (_: Exception) { "unknown" }
+                            recordClient(user, ip)
+                            call.respond(mapOf("token" to ServiceLocator.token))
+                        } else {
+                            call.respondText("Invalid credentials", status = HttpStatusCode.Unauthorized)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("Server", "Login error: ${e.message}", e)
+                        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to ("Login failed: ${e.message}")))
                     }
                 }
 
@@ -225,12 +252,67 @@ object Server {
                     get("/files") {
                         try {
                             val path = call.request.queryParameters["path"] ?: "/"
-                            val items = ServiceLocator.safList(path.trim('/'))
-                            call.respond(mapOf("items" to items))
+                            val limit = call.request.queryParameters["limit"]?.toIntOrNull()
+                            val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0
+
+                            // If no storage roots configured yet, return a friendly error in JSON
+                            if (!ServiceLocator.isRootSet()) {
+                                return@get call.respond(
+                                    FilesResponse(
+                                        items = emptyList(),
+                                        total = 0,
+                                        offset = 0,
+                                        limit = 0,
+                                        error = "No shared folders configured. Open Stremer on Android and select storage folders to share."
+                                    )
+                                )
+                            }
+
+                            // Stream files one by one as NDJSON (newline-delimited JSON)
+                            // This allows the client to render items as they arrive, not waiting for the full list
+                            call.respondBytesWriter(ContentType.parse("application/x-ndjson")) {
+                                try {
+                                    val fileSequence = ServiceLocator.streamFiles(path.trim('/'))
+                                    var skipped = 0
+                                    var count = 0
+
+                                    for (item in fileSequence) {
+                                        // Skip items if offset is specified
+                                        if (skipped < offset) {
+                                            skipped++
+                                            continue
+                                        }
+
+                                        // Stop streaming if we've reached the limit
+                                        if (limit != null && count >= limit) {
+                                            android.util.Log.d("Server", "Stream limit reached: $limit for path: $path (offset: $offset)")
+                                            break
+                                        }
+
+                                        // Serialize each item as JSON and send immediately
+                                        val json = kotlinx.serialization.json.Json.encodeToString(com.stremer.files.FileItem.serializer(), item)
+                                        writeFully((json + "\n").encodeToByteArray())
+                                        flush()
+                                        count++
+                                    }
+                                    android.util.Log.d("Server", "Streamed $count files for path: $path (offset: $offset)")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("Server", "Stream error: ${e.message}", e)
+                                    val errorJson = "{\"error\": \"${e.message?.replace("\"", "\\\"")}\"}\n"
+                                    writeFully(errorJson.encodeToByteArray())
+                                }
+                            }
                         } catch (e: Exception) {
-                            call.respondText(
-                                "Error listing files: ${e.message}. Make sure storage is selected.",
-                                status = HttpStatusCode.InternalServerError
+                            // Fallback to error response
+                            android.util.Log.e("Server", "/files endpoint error: ${e.message}", e)
+                            call.respond(
+                                FilesResponse(
+                                    items = emptyList(),
+                                    total = 0,
+                                    offset = 0,
+                                    limit = 0,
+                                    error = ("Error listing files: ${e.message}. Make sure storage is selected.")
+                                )
                             )
                         }
                     }

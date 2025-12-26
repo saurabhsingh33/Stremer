@@ -211,14 +211,23 @@ object ServiceLocator {
 
     fun issueTokenFor(user: String) { token = "token-$user" }
 
-    fun safList(path: String): List<FileItem> {
+    fun safList(path: String, offset: Int = 0, limit: Int = Int.MAX_VALUE): List<FileItem> {
         val result = if (useFileStorage) {
-            fileStorage?.listFiles(path) ?: emptyList()
+            fileStorage?.listFiles(path, offset, limit) ?: emptyList()
         } else {
-            saf?.listFiles(path) ?: emptyList()
+            saf?.listFiles(path, offset, limit) ?: emptyList()
         }
-        android.util.Log.d("ServiceLocator", "safList($path) returned ${result.size} items")
+        android.util.Log.d("ServiceLocator", "safList($path, offset=$offset, limit=$limit) returned ${result.size} items")
         return result
+    }
+
+    fun streamFiles(path: String = ""): Sequence<FileItem> {
+        return if (useFileStorage) {
+            // FileStorageHelper doesn't have streamFiles yet, fallback to list
+            (fileStorage?.listFiles(path) ?: emptyList()).asSequence()
+        } else {
+            saf?.streamFiles(path) ?: emptySequence()
+        }
     }
 
     data class SearchFilters(
