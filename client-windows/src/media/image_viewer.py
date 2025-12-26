@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from urllib.parse import urlparse, parse_qs, unquote
+import io
 
 
 class ImageViewer(QDialog):
@@ -368,11 +369,40 @@ class ImageViewer(QDialog):
                 print("DEBUG ImageViewer: About to call reply.readAll()")
                 # Try to decode regardless of Qt network 'error' if we received data
                 data: QByteArray = reply.readAll()
-                print(f"DEBUG ImageViewer: readAll() returned {len(data) if data else 0} bytes")
+                data_bytes = bytes(data) if data else b""
+                print(f"DEBUG ImageViewer: readAll() returned {len(data_bytes)} bytes")
+
+                # First attempt: Qt native loader
                 pm = QPixmap()
                 print("DEBUG ImageViewer: Created QPixmap, about to loadFromData")
-                loaded = pm.loadFromData(bytes(data)) if data and len(data) > 0 else False
+                try:
+                    loaded = pm.loadFromData(data_bytes) if data_bytes else False
+                except Exception as e:
+                    print(f"DEBUG ImageViewer: loadFromData exception: {e}")
+                    loaded = False
                 print(f"DEBUG ImageViewer: loadFromData result: {loaded}")
+
+                # Fallback: decode with Pillow to avoid Qt plugin crashes / odd formats
+                if not loaded and data_bytes:
+                    try:
+                        from PIL import Image
+                        buf = io.BytesIO(data_bytes)
+                        img = Image.open(buf)
+                        img = img.convert("RGBA")
+                        # Downscale huge images to avoid OOM/Qt crashes (max dimension 6000)
+                        MAX_DIM = 6000
+                        if max(img.width, img.height) > MAX_DIM:
+                            img.thumbnail((MAX_DIM, MAX_DIM))
+                        img_bytes = img.tobytes("raw", "RGBA")
+                        from PyQt6.QtGui import QImage
+                        qimg = QImage(img_bytes, img.width, img.height, QImage.Format.Format_RGBA8888)
+                        pm = QPixmap.fromImage(qimg)
+                        loaded = not pm.isNull()
+                        print(f"DEBUG ImageViewer: Pillow fallback loaded={loaded}, size={img.width}x{img.height}")
+                    except Exception as e:
+                        print(f"DEBUG ImageViewer: Pillow fallback failed: {e}")
+                        loaded = False
+
                 if loaded:
                     print("DEBUG ImageViewer: Image loaded successfully, setting pixmap")
                     self._pixmap = pm
@@ -381,7 +411,7 @@ class ImageViewer(QDialog):
                     self._update_view(reset=True)
                     print("DEBUG ImageViewer: _update_view completed")
                     # Show only image details (no debugging info)
-                    size_bytes = len(data) if data is not None else 0
+                    size_bytes = len(data_bytes)
                     size_text = f" | {self._fmt_bytes(size_bytes)}" if size_bytes > 0 else ""
                     self._status.setText(self._nice_info() + size_text)
                     print("DEBUG ImageViewer: Status text set")
@@ -396,21 +426,25 @@ class ImageViewer(QDialog):
 
                 print("DEBUG ImageViewer: Image not loaded, showing error")
                 # If not loaded, report concise error (no debug preview)
-                size = len(data) if data is not None else 0
+                size = len(data_bytes)
                 if reply.error():
                     msg = f"Error: {reply.errorString()}"
                 elif size == 0:
                     msg = "No image data received"
                 else:
-                    msg = "Unsupported image format"
+                    msg = "Unsupported or corrupted image format"
                 self._status.setText(msg)
+                QMessageBox.critical(self, "Image error", msg)
                 print(f"DEBUG ImageViewer: Error message set: {msg}")
                 return
             except Exception as e:
-                print(f"DEBUG ImageViewer: EXCEPTION in _finished: {e}")
+                # Never propagate exceptions from Qt slots; just show status
                 import traceback
+                print(f"DEBUG ImageViewer: EXCEPTION in _finished: {e}")
                 traceback.print_exc()
-                raise
+                self._status.setText(f"Error loading image: {e}")
+                QMessageBox.critical(self, "Image error", f"Could not load image:\n{e}")
+                return
             finally:
                 print("DEBUG ImageViewer: In _finished finally block")
                 reply.deleteLater()

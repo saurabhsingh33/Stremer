@@ -476,6 +476,9 @@ class BrowserWidget(QWidget):
         self._load_complete = not has_more  # Only truly complete if no more items
         self._has_more_items = has_more
         self.unsetCursor()
+        # Trigger thumbnail loading for all newly rendered items
+        if self.view_mode == "thumbnails":
+            QTimer.singleShot(0, self._load_visible_thumbnails)
 
     def _on_table_scroll(self, value):
         """Called when table is scrolled - load more items if near bottom."""
@@ -502,7 +505,9 @@ class BrowserWidget(QWidget):
 
         # Also load thumbnails for newly visible items
         if self.view_mode == "thumbnails":
-            self._load_visible_thumbnails()
+            QTimer.singleShot(0, self._load_visible_thumbnails)
+
+    def _load_more_items(self):
         """Load next batch of items when scrolled near bottom."""
         if self._is_loading or self._load_complete:
             return
@@ -628,11 +633,8 @@ class BrowserWidget(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, {"name": name, "type": type_, "path": path_full, "size": size_val})
             self.icon_list.addItem(item)
 
-            # If thumbnails view and item is a file, request a thumbnail from server
-            # Request thumbnails for all file types so server-generated fallback
-            # icons (PDF, TXT, DOC, ZIP, etc.) are displayed.
-            if self.view_mode == "thumbnails" and type_ == "file":
-                self._load_thumbnail_async(item, path_full)
+            # In thumbnails view, defer thumbnail requests to visibility pass to avoid flooding
+            # We still cache metadata so _load_visible_thumbnails can request as needed.
 
     def _update_filter_button_state(self):
         """Enable search button only if at least one filter criterion is entered."""
@@ -923,11 +925,14 @@ class BrowserWidget(QWidget):
             # Apply cached pixmap to any current items matching this path
             pix = self._thumb_cache[key]
             self._apply_thumb_to_items(key, pix)
+            print(f"DEBUG: Using cached thumbnail for {path}")
             return
         # Avoid duplicate requests
         if key in self._thumb_inflight:
+            print(f"DEBUG: Thumbnail for {path} already inflight")
             return
         self._thumb_inflight.add(key)
+        print(f"DEBUG: Queuing thumbnail for {path}, inflight now={len(self._thumb_inflight)}")
 
         url = self.api_client.thumb_url(path, self.icon_list.iconSize().width(), self.icon_list.iconSize().height())
 
@@ -943,21 +948,32 @@ class BrowserWidget(QWidget):
         # Priority queue: visible items go to front, others to back
         if is_visible:
             self._thumb_pending.insert(0, (key, url))  # Front of queue
+            print(f"DEBUG: Visible item {path} inserted at front of queue")
         else:
             self._thumb_pending.append((key, url))  # Back of queue
+            print(f"DEBUG: Non-visible item {path} appended to queue, pending now={len(self._thumb_pending)}")
 
         self._start_next_thumb()
 
     def _load_visible_thumbnails(self):
-        """Load thumbnails for items currently visible (plus a small buffer) in the viewport."""
+        """Load thumbnails for items currently visible (plus a small buffer) in the viewport.
+        Also queue non-visible items for background loading.
+        """
         if self.view_mode != "thumbnails" or not self.api_client:
+            print(f"DEBUG: _load_visible_thumbnails skipped: view_mode={self.view_mode}, has_api_client={bool(self.api_client)}")
             return
 
+        print(f"DEBUG: _load_visible_thumbnails called, icon_list.count()={self.icon_list.count()}")
         viewport_rect = self.icon_list.viewport().rect()
-        # Expand rect to prefetch thumbnails just below/above the viewport
-        buffer = viewport_rect.height() // 2
+        # Expand rect to prefetch thumbnails just below/above the viewport (1 viewport each way)
+        buffer = viewport_rect.height()
         expanded_rect = viewport_rect.adjusted(0, -buffer, 0, buffer)
 
+        visible_paths = set()
+        visible_count = 0
+        non_visible_count = 0
+
+        # First pass: load visible/near-visible items with priority
         for i in range(self.icon_list.count()):
             item = self.icon_list.item(i)
             if not item:
@@ -970,13 +986,35 @@ class BrowserWidget(QWidget):
                 if data and data.get("type") == "file":
                     path = data.get("path")
                     if path:
+                        visible_paths.add(path)
                         self._load_thumbnail_async(item, path)
+                        visible_count += 1
+
+        # Second pass: queue background loading for non-visible items
+        # to ensure all thumbnails eventually load (even if user doesn't scroll)
+        for i in range(self.icon_list.count()):
+            item = self.icon_list.item(i)
+            if not item:
+                continue
+
+            item_rect = self.icon_list.visualItemRect(item)
+            if not expanded_rect.intersects(item_rect):
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if data and data.get("type") == "file":
+                    path = data.get("path")
+                    if path and path not in visible_paths:
+                        self._load_thumbnail_async(item, path)
+                        non_visible_count += 1
+
+        print(f"DEBUG: _load_visible_thumbnails queued {visible_count} visible + {non_visible_count} non-visible, pending={len(self._thumb_pending)}, inflight={len(self._thumb_inflight)}")
 
     def _start_next_thumb(self):
-        # Limit concurrent thumbnail fetches; tuned higher to leverage >10 Mbps LAN
-        MAX_CONCURRENT = 32
+        # Limit concurrent thumbnail fetches; tuned higher to leverage fast LAN
+        MAX_CONCURRENT = 48
+        print(f"DEBUG: _start_next_thumb called: active={self._thumb_active}, pending={len(self._thumb_pending)}, MAX={MAX_CONCURRENT}")
         while self._thumb_active < MAX_CONCURRENT and self._thumb_pending:
             key, url = self._thumb_pending.pop(0)
+            print(f"DEBUG: Starting thumbnail fetch for {key[0]}, active will be {self._thumb_active + 1}")
 
             req = QNetworkRequest(QUrl(url))
             if getattr(self.api_client, 'token', None):
@@ -989,10 +1027,19 @@ class BrowserWidget(QWidget):
                     data = reply.readAll()
                 finally:
                     reply.deleteLater()
+
+                # Check if we have data; ignore error code if we do (Qt sometimes reports spurious errors)
                 if not data:
-                    # Nothing to do; drop inflight marker
-                    pass
-                else:
+                    error_code = reply.error()
+                    print(f"Thumbnail fetch error for {key[0]}: {reply.errorString()} (code={error_code})")
+                    # No data received
+                    if key in self._thumb_inflight:
+                        self._thumb_inflight.remove(key)
+                    self._thumb_active = max(0, self._thumb_active - 1)
+                    self._start_next_thumb()
+                    return
+
+                try:
                     pixmap = QPixmap()
                     if pixmap.loadFromData(bytes(data)):
                         # Resize to icon size if larger
@@ -1000,12 +1047,16 @@ class BrowserWidget(QWidget):
                             pixmap = pixmap.scaled(self.icon_list.iconSize(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                         self._thumb_cache[key] = pixmap
                         self._apply_thumb_to_items(key, pixmap)
-                # Clean up inflight marker
-                if key in self._thumb_inflight:
-                    self._thumb_inflight.remove(key)
-                self._thumb_active = max(0, self._thumb_active - 1)
-                # Kick off next batch
-                self._start_next_thumb()
+                        print(f"DEBUG: Thumbnail loaded for {key[0]}, size={pixmap.width()}x{pixmap.height()}")
+                except Exception as e:
+                    print(f"Thumbnail load exception for {key[0]}: {e}")
+                finally:
+                    # Always clean up inflight marker and continue queue
+                    if key in self._thumb_inflight:
+                        self._thumb_inflight.remove(key)
+                    self._thumb_active = max(0, self._thumb_active - 1)
+                    # Kick off next batch
+                    self._start_next_thumb()
 
             reply.finished.connect(_on_finished)
 
