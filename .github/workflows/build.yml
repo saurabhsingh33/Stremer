@@ -278,17 +278,21 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.detect-changes.outputs.windows-changed == 'false'
     steps:
-      - name: Download previous Windows artifact
-        uses: actions/download-artifact@v4
+      - name: Download Windows artifact from last successful build
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
         with:
           name: windows-exe
           path: windows-exe-prev
+          workflow: build.yml
+          workflow_conclusion: success
 
       - name: Reupload Windows artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: windows-exe
-          path: windows-exe-prev/Stremer-Client-setup.exe
+          path: windows-exe-prev
 
   copy-android-artifact:
     name: Copy Android artifact from previous build
@@ -296,17 +300,21 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.detect-changes.outputs.android-changed == 'false'
     steps:
-      - name: Download previous Android artifact
-        uses: actions/download-artifact@v4
+      - name: Download Android artifact from last successful build
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
         with:
           name: android-apk-release
           path: android-apk-prev
+          workflow: build.yml
+          workflow_conclusion: success
 
       - name: Reupload Android artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: android-apk-release
-          path: android-apk-prev/Stremer-server.apk
+          path: android-apk-prev
 
   create-release:
     name: Create GitHub Release
