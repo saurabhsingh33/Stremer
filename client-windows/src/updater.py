@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import tempfile
 import subprocess
@@ -66,8 +67,14 @@ def download_asset(url: str, filename: str, progress_cb=None) -> str:
 
 def launch_installer(path: str):
     try:
-        # NSIS supports /S for silent. We run normally so user can confirm elevation.
-        subprocess.Popen([path])
+        # On Windows, we need to request elevation (run as admin) for the installer
+        if sys.platform == "win32":
+            import ctypes
+            # Use ShellExecute to run with 'runas' for admin elevation
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", path, "", "", 1)
+        else:
+            # On other platforms, just run normally
+            subprocess.Popen([path])
         QMessageBox.information(None, "Update", "Installer launched. Close the app if prompted.")
     except Exception as e:
         QMessageBox.critical(None, "Update", f"Failed to launch installer: {e}")

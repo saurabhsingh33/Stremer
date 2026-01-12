@@ -5,23 +5,71 @@ on:
     branches:
       - main
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      windows-changed: ${{ steps.changes.outputs.windows }}
+      android-changed: ${{ steps.changes.outputs.android }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect file changes
+        id: changes
+        run: |
+          # For tags, compare with the previous tag/commit
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            BASE_REF="${{ github.ref }}^"
+          else
+            BASE_REF="${{ github.event.before }}"
+          fi
+
+          # Get list of changed files
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" == "0000000000000000000000000000000000000000^" ]; then
+            # First commit or initial push - build everything
+            CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD 2>/dev/null || git ls-files)
+          else
+            CHANGED_FILES=$(git diff --name-only $BASE_REF...HEAD)
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Check if windows files changed
+          if echo "$CHANGED_FILES" | grep -q "^client-windows/"; then
+            echo "windows=true" >> $GITHUB_OUTPUT
+          else
+            echo "windows=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if android files changed
+          if echo "$CHANGED_FILES" | grep -q "^server-android/"; then
+            echo "android=true" >> $GITHUB_OUTPUT
+          else
+            echo "android=false" >> $GITHUB_OUTPUT
+          fi
+
   build-windows:
     name: Build Windows Client (EXE)
+    needs: detect-changes
     runs-on: windows-latest
+    if: needs.detect-changes.outputs.windows-changed == 'true'
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         working-directory: client-windows
@@ -178,15 +226,17 @@ jobs:
 
   build-android:
     name: Build Android Server (APK)
+    needs: detect-changes
     runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.android-changed == 'true'
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up JDK
         uses: actions/setup-java@v3
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: "17"
+          distribution: "temurin"
 
       - name: Grant execute permission for Gradle
         working-directory: server-android
@@ -222,9 +272,52 @@ jobs:
           name: android-apk-release
           path: server-android/app/build/outputs/apk/release/Stremer-server.apk
 
+  copy-windows-artifact:
+    name: Copy Windows artifact from previous build
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.windows-changed == 'false'
+    steps:
+      - name: Download previous Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: windows-exe-prev
+
+      - name: Reupload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: windows-exe-prev/Stremer-Client-setup.exe
+
+  copy-android-artifact:
+    name: Copy Android artifact from previous build
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.android-changed == 'false'
+    steps:
+      - name: Download previous Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk-release
+          path: android-apk-prev
+
+      - name: Reupload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-release
+          path: android-apk-prev/Stremer-server.apk
+
   create-release:
     name: Create GitHub Release
-    needs: [build-windows, build-android]
+    needs:
+      [
+        detect-changes,
+        build-windows,
+        build-android,
+        copy-windows-artifact,
+        copy-android-artifact,
+      ]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
